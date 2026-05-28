@@ -1,0 +1,55 @@
+# Demo Guide
+
+This demo shows the V1 MVP loop for the AI Engineering Planner: canonical Planning Graph, Markdown-first projections, validation, reconciliation, and planning change-log support.
+
+## Commands
+
+Run from the repository root.
+
+```sh
+npm install
+npm run build
+npm test
+npm run lint
+npm run check
+npm run validate:graph
+node dist/src/adapters/cli/index.js status --json
+node dist/src/adapters/cli/index.js validate --json
+node dist/src/adapters/cli/index.js export --json
+node dist/src/adapters/cli/index.js reconcile --json
+```
+
+## Expected Output
+
+- `npm run build`: TypeScript compiles without errors.
+- `npm test`: Vitest reports all test files and tests passing.
+- `npm run lint`: ESLint completes without findings.
+- `npm run check`: build, tests, and lint all pass.
+- `npm run validate:graph`: reports `graph_version: 6`, `status: pass`, `errors: 0`, and `warnings: 0`.
+- `status --json`: reports graph version 6, status `pass`, all eight Work Items AFK-ready and agent-eligible, and no blocked or HITL-gated Work Items.
+- `validate --json`: reports semantic status, errors, warnings, readiness summary, and readiness snapshots.
+- `export --json`: reports deterministic projection paths written from the graph.
+- `reconcile --json`: reports proposed safe patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
+
+## MVP Flow
+
+`planning/graph.json` is the source of truth. It contains requirements, decisions, Work Items, execution slices, dependency edges, readiness snapshots, and document projection metadata.
+
+Markdown-first repository export renders graph state into local, diffable artifacts under `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/`. These files are projections, not independent canonical state.
+
+Validation checks graph semantics and derives readiness. In the current MVP graph, all eight Work Items are done, AFK-ready, and agent-eligible.
+
+Projection rendering writes predictable Markdown and structured planning artifacts from the canonical graph. This supports repository-native review without external services.
+
+Reconciliation reads Work Item Markdown and proposes safe V1 graph patches where supported. It does not mutate unless `--apply` is explicitly passed, and it does not silently treat Markdown as canonical truth.
+
+The planning change log at `planning/change-log.ndjson` records graph-changing events with graph version transitions, affected nodes, approval status, summary, and provenance. Applied reconciliation patches write a change-log event.
+
+## Known V1 Limitations
+
+- No live LLM calls.
+- No external tracker sync.
+- No autonomous coding-agent execution.
+- `planner plan` is scaffolded and does not yet convert a new Intake Brief into a graph.
+- CLI validation reports semantic validation; JSON Schema runtime validation is represented as `schemaStatus: "not_run"`.
+- Reconciliation supports safe V1 fields and reports richer Markdown sections or unsupported relationships as `unsupportedProjectionEdits`.

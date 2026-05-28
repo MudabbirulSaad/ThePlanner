@@ -1,0 +1,3 @@
+# TypeScript Node V1 Stack
+
+The AI Engineering Planner V1 uses TypeScript on Node.js as the implementation stack. This is hard to reverse once graph models, CLI commands, validation rules, projections, tests, and adapters are built. TypeScript gives strong type safety for Planning Graph nodes, edges, Work Items, readiness snapshots, projections, and graph operations. Node.js fits CLI tooling, JSON Schema validation, Markdown/frontmatter generation, golden-file tests, and future web/editor reuse. Python has a stronger AI/ML ecosystem, but this product is primarily a typed repo-planning, CLI, validation, and artifact-generation system, so TypeScript/Node is the pragmatic V1 default.
