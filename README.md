@@ -116,6 +116,12 @@ Command behavior:
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
 
+## Schema Version Policy
+
+V1 supports Planning Graph `schema_version` value `0.1.0` only. Runtime JSON Schema validation pins this value before semantic validation runs, and core validation also reports unsupported versions when called directly.
+
+Unsupported versions fail validation with a clear error. V1 does not provide graph migrations; future schema versions must add an explicit migration adapter or document a migration-unavailable failure before they are accepted.
+
 ## Agent Runner Commands
 
 `planner run` is a local process runner only. It sends the generated prompt to the selected command on stdin and sets `PLANNER_AGENT`, `PLANNER_RUN_ID`, `PLANNER_WORK_ITEM_ID`, and `PLANNER_RUN_DIRECTORY` in the child process environment.
@@ -169,7 +175,7 @@ The repository follows Hexagonal Architecture:
 ## Known V1 Limitations
 
 - `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
-- Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. Broader schema evolution and migrations are deferred.
+- Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. V1 supports only `schema_version: "0.1.0"` and reports unsupported versions instead of migrating them.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is limited to `sync github --dry-run --json`; live external issue creation and credentialed tracker APIs are deferred.
 - LLM cloud API adapters and live provider calls are not implemented.

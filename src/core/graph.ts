@@ -24,6 +24,10 @@ export type PlanningNodeId =
   | ExecutionSliceId;
 
 export type GraphVersion = Brand<number, "GraphVersion">;
+export const supportedPlanningGraphSchemaVersions = ["0.1.0"] as const;
+export const currentPlanningGraphSchemaVersion = supportedPlanningGraphSchemaVersions[0];
+
+export type PlanningGraphSchemaVersion = (typeof supportedPlanningGraphSchemaVersions)[number];
 
 export type ProvenanceSourceType =
   | "user_answer"
@@ -201,6 +205,10 @@ export interface PlanningGraph {
   readonly source?: string;
   readonly nodes: readonly PlanningNode[];
   readonly edges: readonly DependencyEdge[];
+}
+
+export function isSupportedPlanningGraphSchemaVersion(value: string): value is PlanningGraphSchemaVersion {
+  return supportedPlanningGraphSchemaVersions.some((version) => version === value);
 }
 
 export function graphVersion(value: number): GraphVersion {

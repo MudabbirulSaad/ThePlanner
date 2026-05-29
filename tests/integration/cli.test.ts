@@ -277,6 +277,39 @@ describe("planner CLI use case wiring", () => {
     }
   });
 
+  it("reports unsupported schema versions as schema validation errors", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-schema-version-fail-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      const rawGraph = serializePlanningGraphJson(graph) as { schema_version: string };
+      rawGraph.schema_version = "0.2.0";
+      await writeFile("planning/graph.json", `${JSON.stringify(rawGraph, null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["validate", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        graphSchemaValidator: new FilePlanningGraphSchemaValidator(join(originalCwd, "planning/graph.schema.json")),
+        projectionWriter: { writeAll: async () => undefined }
+      });
+
+      const output = JSON.parse(result.stdout);
+      expect(result.exitCode).toBe(1);
+      expect(output).toMatchObject({
+        status: "error",
+        schemaStatus: "error",
+        semanticErrors: []
+      });
+      expect(output.schemaErrors.map((error: { message: string }) => error.message)).toContain(
+        "$.schema_version: expected one of 0.1.0"
+      );
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("initializes a workspace and preserves existing files on rerun", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-init-"));

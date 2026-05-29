@@ -10,6 +10,7 @@ import type {
   WorkItemId,
   WorkItemNode
 } from "./graph.js";
+import { isSupportedPlanningGraphSchemaVersion } from "./graph.js";
 
 export type ValidationStatus = "pass" | "warning" | "error";
 export type SchemaValidationStatus = "not_run" | "pass" | "warning" | "error";
@@ -45,6 +46,13 @@ export function validatePlanningGraph(graph: PlanningGraph): GraphValidationResu
   const workItems = graph.nodes.filter(isWorkItem);
   const semanticErrors: ValidationFinding[] = [];
   const semanticWarnings: ValidationFinding[] = [];
+
+  if (!isSupportedPlanningGraphSchemaVersion(graph.schemaVersion)) {
+    semanticErrors.push({
+      code: "unsupported_schema_version",
+      message: `Unsupported Planning Graph schema_version "${graph.schemaVersion}". Supported V1 schema_version values: 0.1.0. Migrations are not available in V1.`
+    });
+  }
 
   for (const edge of graph.edges) {
     if (!nodeById.has(edge.source)) {

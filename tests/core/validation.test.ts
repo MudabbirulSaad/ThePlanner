@@ -41,6 +41,21 @@ describe("graph validation and readiness", () => {
     expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
   });
 
+  it("rejects unsupported Planning Graph schema versions", () => {
+    const raw = cloneGraph();
+    raw.schema_version = "0.2.0";
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("error");
+    expect(result.semanticErrors).toContainEqual(
+      expect.objectContaining({
+        code: "unsupported_schema_version",
+        message: expect.stringContaining('Unsupported Planning Graph schema_version "0.2.0"')
+      })
+    );
+  });
+
   it("requires Work Item traceability and Acceptance Criteria", () => {
     const raw = cloneGraph();
     raw.nodes.work_items[0].acceptance_criteria = [];

@@ -1,5 +1,6 @@
 import {
   applyGraphPatches,
+  currentPlanningGraphSchemaVersion,
   generateIntakeQuestions,
   proposePlanningGraphFromBrief,
   renderRefinedBriefScaffold,
@@ -1583,7 +1584,7 @@ const starterFiles = [
     path: "planning/graph.json",
     content: `${JSON.stringify(
       {
-        schema_version: "0.1.0",
+        schema_version: currentPlanningGraphSchemaVersion,
         graph_version: 1,
         generated_at: "2026-05-29T00:00:00+10:00",
         source: "starter-workspace",

@@ -5,7 +5,7 @@ export const graphSchemaTemplate = `{
   "type": "object",
   "required": ["schema_version", "graph_version", "nodes", "edges"],
   "properties": {
-    "schema_version": { "type": "string" },
+    "schema_version": { "type": "string", "enum": ["0.1.0"] },
     "graph_version": { "type": "integer", "minimum": 1 },
     "generated_at": { "type": "string" },
     "source": { "type": "string" },

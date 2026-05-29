@@ -20,7 +20,7 @@ Status: follow-up issue created as `issues/018-normalize-json-error-responses.md
 
 Runtime JSON Schema validation exists, but `schema_version` is not pinned to supported versions and there is no documented migration behavior for future graph versions. Production users need deterministic failure or migration behavior before graph shape changes.
 
-Status: follow-up issue created as `issues/019-define-schema-version-and-migration-policy.md`.
+Status: fixed by `issues/019-define-schema-version-and-migration-policy.md`. V1 supports only `schema_version: "0.1.0"`; runtime schema validation and core validation reject unsupported versions, and V1 reports migration-unavailable behavior instead of attempting migrations.
 
 ### Medium: local runner processes have no timeout or output cap
 
@@ -33,13 +33,13 @@ Status: follow-up issue created as `issues/020-add-agent-runner-timeouts-and-out
 - Command UX: command surface is deterministic and documented. Dry-run/apply split exists for destructive export, plan, reconcile, and sync operations. Remaining concern is inconsistent JSON error output.
 - Failure modes: missing graph JSON, schema failures, runner-not-found, auth preflight failure, validation failure, and invalid run IDs have useful handling in covered paths.
 - Destructive operations: `init` and refined brief writes preserve existing files unless forced. `plan --apply` refuses non-empty graph overwrite. `export --apply` is intentionally destructive for generated projections and now rejects unsafe projection paths.
-- Schema/migration behavior: runtime schema validation happens before semantic validation, but future schema compatibility remains undefined.
+- Schema/migration behavior: runtime schema validation happens before semantic validation, and V1 pins supported graphs to `schema_version: "0.1.0"`. Future schema compatibility requires an explicit migration adapter or documented migration-unavailable failure.
 - Run artifacts: `prepare --apply` and `run` persist reviewable artifacts under `planning/runs/`; run IDs are validated before review/accept/reject artifact reads.
 - Agent process boundaries: live LLM APIs are not called by tests or dry-run paths. `planner run` invokes only the configured local process, but needs production limits.
 - Config loading: `planningDirectory` is validated as a safe relative path; default agent and validation commands are checked. Command strings remain local operator-controlled.
-- Docs accuracy: README and demo docs match the current V1 local-first scope. No behavior docs changed except this audit report.
+- Docs accuracy: README and demo docs match the current V1 local-first scope. README now documents the V1 schema version and migration-unavailable policy.
 - Test coverage: core validation, reconciliation, CLI wiring, config, runner artifacts, schema validation, and dependency boundaries are covered. New coverage was added for unsafe projection paths.
-- Security risks: the main fixed risk was projection path traversal. Remaining risks are local runner resource bounds and explicit schema compatibility.
+- Security risks: the main fixed risk was projection path traversal. Remaining risks are local runner resource bounds.
 
 ## Validation Evidence
 
@@ -56,7 +56,7 @@ node dist/src/adapters/cli/index.js validate --json
 node dist/src/adapters/cli/index.js reconcile --json
 ```
 
-Observed test result: 15 test files passed, 83 tests passed.
+Observed test result: 15 test files passed, 87 tests passed.
 
 ## Known Limitations
 

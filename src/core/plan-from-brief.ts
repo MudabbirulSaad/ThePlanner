@@ -10,7 +10,7 @@ import type {
   RiskNode,
   WorkItemNode
 } from "./graph.js";
-import { graphVersion, stableId } from "./graph.js";
+import { currentPlanningGraphSchemaVersion, graphVersion, stableId } from "./graph.js";
 
 export interface PlanFromBriefInput {
   readonly sourcePath: string;
@@ -74,7 +74,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
 
   return {
     graph: {
-      schemaVersion: "0.1.0",
+      schemaVersion: currentPlanningGraphSchemaVersion,
       graphVersion: graphVersion(1),
       source: sourceReference,
       nodes: [...requirements, ...openQuestions, ...risks, ...components, ...workItems, ...documents, ...slices],
