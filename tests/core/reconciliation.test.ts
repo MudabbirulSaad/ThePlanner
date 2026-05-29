@@ -106,6 +106,48 @@ describe("graph reconciliation", () => {
     expect(result.conflicts).toEqual([]);
   });
 
+  it("returns no patch for an unchanged manual-review validation projection", () => {
+    const graphWithManualReviewValidation = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [
+          { id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Work item",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: [{ type: "manual_review", expected_result: "Reviewer confirms the result." }]
+          }
+        ],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
+    });
+    const workItemWithManualReviewValidation = graphWithManualReviewValidation.nodes.find(isWorkItemOne);
+    if (!workItemWithManualReviewValidation) {
+      throw new Error("Fixture Work Item missing.");
+    }
+
+    const result = reconcileGraphProjections(graphWithManualReviewValidation, [
+      renderWorkItemProjection(graphWithManualReviewValidation, workItemWithManualReviewValidation)
+    ]);
+
+    expect(result.proposedPatches).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+  });
+
   it("proposes a graph patch for a changed Work Item title", () => {
     const result = reconcileGraphProjections(graph, [
       { ...projection, content: projection.content.replace("title: Work item", "title: Renamed work item") }

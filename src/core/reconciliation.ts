@@ -307,14 +307,13 @@ function compareValidationMethods(
   patches: GraphPatch[]
 ) {
   const frontmatterValidation = validationMethods(parsed.frontmatter.validation);
-  const bodyCommands = markdownList(parsed.sections.Validation).map(stripInlineCode);
+  const bodyValidationItems = markdownList(parsed.sections.Validation);
+  const bodyCommands = bodyValidationItems.map(stripInlineCode);
+  const renderedValidationItems = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
   if (
     frontmatterValidation.length === 0 &&
     bodyCommands.length > 0 &&
-    sameList(
-      bodyCommands,
-      workItem.validationMethods.map((method) => method.command ?? method.expectedResult)
-    )
+    (sameList(bodyCommands, renderedValidationItems) || sameList(bodyValidationItems, renderedValidationItems))
   ) {
     return;
   }
