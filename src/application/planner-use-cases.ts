@@ -1,5 +1,6 @@
 import {
   applyGraphPatches,
+  generateIntakeQuestions,
   reconcileGraphProjections,
   renderAllProjections,
   validatePlanningGraph,
@@ -7,11 +8,13 @@ import {
 } from "../core/index.js";
 import type {
   GraphValidationResult,
+  IntakeQuestionSet,
   PlanningGraph,
   ProjectionInput,
   ReconciliationResult,
   RenderedProjection
 } from "../core/index.js";
+import { intakeBriefTemplate } from "../templates/intake-brief-template.js";
 
 export interface GraphRepository {
   readonly load: () => Promise<PlanningGraph>;
@@ -55,6 +58,10 @@ export interface WorkspaceInitEntry {
 export interface WorkspaceInitializer {
   readonly ensureDirectory: (path: string) => Promise<WorkspaceEntryStatus>;
   readonly writeFileIfMissing: (path: string, content: string) => Promise<WorkspaceEntryStatus>;
+}
+
+export interface IntakeIdeaReader {
+  readonly read: (path: string) => Promise<string>;
 }
 
 export interface ValidateGraphUseCaseResult {
@@ -124,6 +131,26 @@ export async function initWorkspaceUseCase(
     entries,
     created: entries.filter((entry) => entry.status === "created").map((entry) => entry.path),
     existing: entries.filter((entry) => entry.status === "existing").map((entry) => entry.path)
+  };
+}
+
+export async function intakeQuestionsUseCase(args: {
+  readonly intakeIdeaReader: IntakeIdeaReader;
+  readonly path: string;
+}): Promise<
+  IntakeQuestionSet & {
+    readonly sourcePath: string;
+    readonly agentPrompt: string;
+  }
+> {
+  const ideaContent = await args.intakeIdeaReader.read(args.path);
+  const questionSet = generateIntakeQuestions(ideaContent);
+
+  return {
+    sourcePath: args.path,
+    ...questionSet,
+    agentPrompt:
+      "Use the intake idea and grouped questions below to grill me. Ask follow-up questions until the target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions are clear enough to draft a refined brief."
   };
 }
 
@@ -235,10 +262,7 @@ const starterDirectories = [
 const starterFiles = [
   {
     path: "planning/intake/idea.md",
-    content: `# Idea
-
-Describe the software idea, target users, main workflow, constraints, and any open questions.
-`
+    content: intakeBriefTemplate
   },
   {
     path: "planning/change-log.ndjson",

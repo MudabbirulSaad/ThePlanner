@@ -5,6 +5,7 @@ import { parsePlanningGraphJson, serializePlanningGraphJson } from "../../applic
 import type {
   ChangeLogWriter,
   GraphRepository,
+  IntakeIdeaReader,
   PlanningChangeLogEvent,
   ProjectionReader,
   ProjectionWriter,
@@ -63,6 +64,19 @@ export class FileChangeLogWriter implements ChangeLogWriter {
     const resolvedPath = resolve(this.path);
     await mkdir(dirname(resolvedPath), { recursive: true });
     await appendFile(resolvedPath, `${JSON.stringify(event)}\n`, "utf8");
+  }
+}
+
+export class FileIntakeIdeaReader implements IntakeIdeaReader {
+  public async read(path: string): Promise<string> {
+    try {
+      return await readFile(resolve(path), "utf8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new Error(`Intake idea file not found: ${path}`);
+      }
+      throw error;
+    }
   }
 }
 

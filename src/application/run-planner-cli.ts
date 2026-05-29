@@ -7,6 +7,7 @@ export interface PlannerCliResult {
 import {
   exportProjectionsUseCase,
   initWorkspaceUseCase,
+  intakeQuestionsUseCase,
   reconcileGraphUseCase,
   statusUseCase,
   validateGraphUseCase
@@ -14,6 +15,7 @@ import {
 import type {
   ChangeLogWriter,
   GraphRepository,
+  IntakeIdeaReader,
   ProjectionReader,
   ProjectionWriter,
   WorkspaceInitializer
@@ -25,7 +27,21 @@ export interface PlannerCliServices {
   readonly projectionReader?: ProjectionReader;
   readonly changeLogWriter?: ChangeLogWriter;
   readonly workspaceInitializer?: WorkspaceInitializer;
+  readonly intakeIdeaReader?: IntakeIdeaReader;
 }
+
+type RenderableIntakeQuestionResult = {
+  readonly sourcePath: string;
+  readonly ideaPreview: string;
+  readonly agentPrompt: string;
+  readonly groups: readonly {
+    readonly title: string;
+    readonly questions: readonly {
+      readonly id: string;
+      readonly question: string;
+    }[];
+  }[];
+};
 
 export async function runPlannerCli(
   args: readonly string[],
@@ -56,6 +72,32 @@ export async function runPlannerCli(
 
     const result = await initWorkspaceUseCase(services.workspaceInitializer);
     return render(0, result, json);
+  }
+
+  if (command === "intake") {
+    if (rest[0] !== "questions") {
+      return { exitCode: 1, stdout: "", stderr: "planner intake requires the questions subcommand\n" };
+    }
+
+    if (!services.intakeIdeaReader) {
+      return { exitCode: 1, stdout: "", stderr: "planner intake questions requires an intake idea reader\n" };
+    }
+
+    const from = readOption(rest, "--from");
+    if (!from) {
+      return { exitCode: 1, stdout: "", stderr: "planner intake questions requires --from <file>\n" };
+    }
+
+    try {
+      const result = await intakeQuestionsUseCase({ intakeIdeaReader: services.intakeIdeaReader, path: from });
+      return render(0, result, json);
+    } catch (error) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: `${error instanceof Error ? error.message : String(error)}\n`
+      };
+    }
   }
 
   if (command === "plan") {
@@ -124,11 +166,28 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
     };
   }
 
+  if (isIntakeQuestionResult(value)) {
+    return {
+      exitCode,
+      stdout: renderIntakeQuestions(value),
+      stderr: ""
+    };
+  }
+
   return {
     exitCode,
     stdout: `${JSON.stringify(value)}\n`,
     stderr: ""
   };
+}
+
+function readOption(args: readonly string[], option: string): string | undefined {
+  const index = args.indexOf(option);
+  if (index === -1) {
+    return undefined;
+  }
+
+  return args[index + 1];
 }
 
 function isWorkspaceInitResult(value: unknown): value is {
@@ -153,4 +212,37 @@ function isValidation(value: unknown): value is {
       "semanticErrors" in value &&
       "semanticWarnings" in value
   );
+}
+
+function isIntakeQuestionResult(value: unknown): value is RenderableIntakeQuestionResult {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "sourcePath" in value &&
+      "ideaPreview" in value &&
+      "agentPrompt" in value &&
+      "groups" in value &&
+      Array.isArray(value.groups)
+  );
+}
+
+function renderIntakeQuestions(value: RenderableIntakeQuestionResult): string {
+  return [
+    "# Intake Grilling Questions",
+    "",
+    `Source: ${value.sourcePath}`,
+    "",
+    "Idea preview:",
+    `> ${value.ideaPreview || "(empty idea file)"}`,
+    "",
+    "How to use with an agent:",
+    value.agentPrompt,
+    "",
+    ...value.groups.flatMap((group) => [
+      `## ${group.title}`,
+      "",
+      ...group.questions.map((question) => `- ${question.question}`),
+      ""
+    ])
+  ].join("\n");
 }

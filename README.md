@@ -47,6 +47,7 @@ node dist/src/adapters/cli/index.js init --json
 node dist/src/adapters/cli/index.js status --json
 node dist/src/adapters/cli/index.js validate --json
 node dist/src/adapters/cli/index.js export --json
+node dist/src/adapters/cli/index.js intake questions --from planning/intake/idea.md --json
 node dist/src/adapters/cli/index.js reconcile --json
 node dist/src/adapters/cli/index.js reconcile --apply --json
 ```
@@ -57,6 +58,7 @@ Command behavior:
 - `status`: returns graph version, validation status, and readiness summary.
 - `validate`: returns schema status, semantic errors, semantic warnings, readiness summary, and readiness snapshots.
 - `export`: writes deterministic projections from the canonical graph.
+- `intake questions --from <file>`: reads a rough intake idea and prints deterministic grilling questions grouped by target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions. Add `--json` for structured output. Paste the human-readable output into Codex, Claude, or Gemini to run a manual grilling conversation before creating a refined brief.
 - `reconcile`: reads Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
 - `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
 - `plan --brief <file>`: scaffolded/deferred in V1; it reports command availability but does not build an intake-to-graph planner yet.

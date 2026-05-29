@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
-import { FileWorkspaceInitializer } from "../../src/adapters/index.js";
+import { FileIntakeIdeaReader, FileWorkspaceInitializer } from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
@@ -80,6 +80,7 @@ describe("planner CLI use case wiring", () => {
 
       const graphJson = JSON.parse(await readFile("planning/graph.json", "utf8"));
       expect(validatePlanningGraph(parsePlanningGraphJson(graphJson)).status).toBe("pass");
+      expect(await readFile("planning/intake/idea.md", "utf8")).toContain("## Target Users");
 
       await writeFile("planning/intake/idea.md", "do not overwrite\n", "utf8");
       const second = await runPlannerCli(["init", "--json"], {
@@ -95,6 +96,64 @@ describe("planner CLI use case wiring", () => {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
     }
+  });
+
+  it("renders deterministic intake questions from an idea file as JSON", async () => {
+    const result = await runPlannerCli(
+      ["intake", "questions", "--from", "tests/fixtures/intake/short-idea.md", "--json"],
+      {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        intakeIdeaReader: new FileIntakeIdeaReader()
+      }
+    );
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.sourcePath).toBe("tests/fixtures/intake/short-idea.md");
+    expect(output.groups).toHaveLength(7);
+    expect(output.groups[0]).toMatchObject({
+      id: "target_user",
+      title: "Target User",
+      questions: [
+        {
+          id: "target_user.primary_user",
+          question: "Who is the primary target user, and what role or context are they in when they need this?"
+        },
+        {
+          id: "target_user.current_workaround",
+          question: "How does that user solve or work around the problem today?"
+        },
+        {
+          id: "target_user.excluded_users",
+          question: "Which users or audiences are explicitly not being optimized for in the first version?"
+        }
+      ]
+    });
+  });
+
+  it("renders high-level human-readable intake questions", async () => {
+    const result = await runPlannerCli(["intake", "questions", "--from", "tests/fixtures/intake/short-idea.md"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      intakeIdeaReader: new FileIntakeIdeaReader()
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("# Intake Grilling Questions");
+    expect(result.stdout).toContain("## MVP Scope");
+    expect(result.stdout).toContain("How to use with an agent:");
+  });
+
+  it("returns a useful error for missing intake idea files", async () => {
+    const result = await runPlannerCli(["intake", "questions", "--from", "tests/fixtures/intake/missing.md"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      intakeIdeaReader: new FileIntakeIdeaReader()
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("Intake idea file not found: tests/fixtures/intake/missing.md\n");
   });
 
   it("reports projection paths returned by the writer during export", async () => {
