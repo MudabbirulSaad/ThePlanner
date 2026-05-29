@@ -11,11 +11,11 @@ The MVP is local and repository-first:
 - In any workspace, the local `planning/graph.json` is the canonical source of truth.
 - Markdown files under that workspace's `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` paths are projections.
 - Work Items carry deterministic execution state, readiness labels, acceptance criteria, and validation methods.
-- Validation checks graph semantics and derives readiness summaries.
+- Validation checks graph JSON Schema shape, graph semantics, and derived readiness summaries.
 - Reconciliation inspects Work Item Markdown and proposes safe graph patches without mutating unless `--apply` is passed.
 - Planning changes are recorded in `planning/change-log.ndjson` for graph-changing flows.
 
-External tracker sync, live LLM calls, autonomous execution, and full schema-adapter validation are outside V1.
+External tracker sync, live LLM calls, and autonomous execution are outside V1.
 
 ## Setup
 
@@ -58,9 +58,9 @@ node dist/src/adapters/cli/index.js reconcile --apply --json
 
 Command behavior:
 
-- `init`: creates missing starter directories and files for a planning workspace, including `planning/intake/idea.md`, `planning/change-log.ndjson`, and a minimal valid `planning/graph.json`; existing files are reported and left untouched.
+- `init`: creates missing starter directories and files for a planning workspace, including `planning/intake/idea.md`, `planning/change-log.ndjson`, `planning/graph.schema.json`, and a minimal valid `planning/graph.json`; existing files are reported and left untouched.
 - `status`: returns graph version, validation status, and readiness summary.
-- `validate`: returns schema status, semantic errors, semantic warnings, readiness summary, and readiness snapshots.
+- `validate`: validates `planning/graph.json` against `planning/graph.schema.json`, then returns schema status, schema errors, semantic errors, semantic warnings, readiness summary, and readiness snapshots. Semantic validation is skipped when schema validation fails.
 - `export --dry-run --json`: previews deterministic projection writes from the canonical graph without changing files. JSON reports files that would be created, updated, unchanged, and Markdown sections that may contain human-authored notes an apply would overwrite.
 - `export --apply --json`: writes deterministic projections from the canonical graph. Projection files are generated artifacts; applying export overwrites the full rendered file content. Bare `export` is retained as a compatibility alias for apply.
 - `intake questions --from <file>`: reads a rough intake idea and prints deterministic grilling questions grouped by target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions. Add `--json` for structured output. Paste the human-readable output into Codex, Claude, or Gemini to run a manual grilling conversation before creating a refined brief.
@@ -111,7 +111,7 @@ The repository follows Hexagonal Architecture:
 ## Known V1 Limitations
 
 - `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
-- JSON Schema validation is represented by `planning/graph.schema.json`, but the current CLI semantic validator reports `schemaStatus: "not_run"`.
+- Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. Broader schema evolution and migrations are deferred.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is deferred.
 - LLM adapters and live provider calls are not implemented.

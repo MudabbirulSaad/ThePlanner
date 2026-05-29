@@ -22,8 +22,12 @@ export class FilePlanningGraphRepository implements GraphRepository {
   public constructor(private readonly graphPath = "planning/graph.json") {}
 
   public async load() {
+    return parsePlanningGraphJson(await this.loadJson());
+  }
+
+  public async loadJson(): Promise<unknown> {
     const source = await readFile(resolve(this.graphPath), "utf8");
-    return parsePlanningGraphJson(JSON.parse(source));
+    return JSON.parse(source);
   }
 
   public async loadIfExists(): Promise<PlanningGraph | undefined> {

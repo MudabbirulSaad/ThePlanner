@@ -39,8 +39,12 @@ describe("init workspace use case", () => {
       "docs/architecture",
       "planning/intake/idea.md",
       "planning/change-log.ndjson",
+      "planning/graph.schema.json",
       "planning/graph.json"
     ]);
+    expect(JSON.parse(initializer.files.get("planning/graph.schema.json") ?? "{}")).toMatchObject({
+      title: "AI Engineering Planner Graph"
+    });
     expect(JSON.parse(initializer.files.get("planning/graph.json") ?? "{}")).toMatchObject({
       schema_version: "0.1.0",
       graph_version: 1,

@@ -33,6 +33,7 @@ export interface GraphValidationResult {
   readonly graphVersion: number;
   readonly status: ValidationStatus;
   readonly schemaStatus: SchemaValidationStatus;
+  readonly schemaErrors: readonly ValidationFinding[];
   readonly semanticErrors: readonly ValidationFinding[];
   readonly semanticWarnings: readonly ValidationFinding[];
   readonly readinessSummary: ReadinessSummary;
@@ -166,6 +167,7 @@ export function validatePlanningGraph(graph: PlanningGraph): GraphValidationResu
     graphVersion: graph.graphVersion,
     status,
     schemaStatus: "not_run",
+    schemaErrors: [],
     semanticErrors,
     semanticWarnings,
     readinessSummary,

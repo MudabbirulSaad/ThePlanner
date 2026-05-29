@@ -19,6 +19,7 @@ import type {
   ChangeLogWriter,
   GraphRepository,
   IntakeIdeaReader,
+  JsonSchemaValidator,
   ProjectionReader,
   ProjectionWriter,
   RefinedBriefReader,
@@ -28,6 +29,7 @@ import type {
 
 export interface PlannerCliServices {
   readonly graphRepository: GraphRepository;
+  readonly graphSchemaValidator?: JsonSchemaValidator;
   readonly projectionWriter: ProjectionWriter;
   readonly projectionReader?: ProjectionReader;
   readonly changeLogWriter?: ChangeLogWriter;
@@ -58,7 +60,10 @@ export async function runPlannerCli(
   const json = rest.includes("--json");
 
   if (command === "validate") {
-    const result = await validateGraphUseCase(services.graphRepository);
+    const result = await validateGraphUseCase({
+      graphRepository: services.graphRepository,
+      schemaValidator: services.graphSchemaValidator
+    });
     return render(result.exitCode, result.validation, json);
   }
 
@@ -245,7 +250,7 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
   if (isValidation(value)) {
     return {
       exitCode,
-      stdout: `graph_version: ${value.graphVersion}\nstatus: ${value.status}\nerrors: ${value.semanticErrors.length}\nwarnings: ${value.semanticWarnings.length}\n`,
+      stdout: `graph_version: ${value.graphVersion}\nstatus: ${value.status}\nschema_status: ${value.schemaStatus}\nschema_errors: ${value.schemaErrors.length}\nerrors: ${value.semanticErrors.length}\nwarnings: ${value.semanticWarnings.length}\n`,
       stderr: ""
     };
   }
@@ -312,6 +317,8 @@ function isWorkspaceInitResult(value: unknown): value is {
 function isValidation(value: unknown): value is {
   readonly graphVersion: number;
   readonly status: string;
+  readonly schemaStatus: string;
+  readonly schemaErrors: readonly unknown[];
   readonly semanticErrors: readonly unknown[];
   readonly semanticWarnings: readonly unknown[];
 } {
@@ -319,6 +326,8 @@ function isValidation(value: unknown): value is {
     value &&
       typeof value === "object" &&
       "graphVersion" in value &&
+      "schemaStatus" in value &&
+      "schemaErrors" in value &&
       "semanticErrors" in value &&
       "semanticWarnings" in value
   );

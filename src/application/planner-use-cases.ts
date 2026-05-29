@@ -16,13 +16,26 @@ import type {
   ReconciliationResult,
   RenderedProjection
 } from "../core/index.js";
+import { graphSchemaTemplate } from "../templates/graph-schema-template.js";
 import { intakeBriefTemplate } from "../templates/intake-brief-template.js";
-import { serializePlanningGraphJson } from "./graph-json.js";
+import { parsePlanningGraphJson, serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
   readonly load: () => Promise<PlanningGraph>;
+  readonly loadJson?: () => Promise<unknown>;
   readonly loadIfExists?: () => Promise<PlanningGraph | undefined>;
   readonly save?: (graph: PlanningGraph) => Promise<void>;
+}
+
+export type RunnableSchemaValidationStatus = Exclude<GraphValidationResult["schemaStatus"], "not_run" | "warning">;
+
+export interface SchemaValidationReport {
+  readonly status: RunnableSchemaValidationStatus;
+  readonly errors: GraphValidationResult["schemaErrors"];
+}
+
+export interface JsonSchemaValidator {
+  readonly validate: (value: unknown) => Promise<SchemaValidationReport> | SchemaValidationReport;
 }
 
 export interface ProjectionWriter {
@@ -105,11 +118,65 @@ export interface ValidateGraphUseCaseResult {
   readonly exitCode: number;
 }
 
-export async function validateGraphUseCase(graphRepository: GraphRepository): Promise<ValidateGraphUseCaseResult> {
-  const validation = validatePlanningGraph(await graphRepository.load());
+export async function validateGraphUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly schemaValidator?: JsonSchemaValidator;
+}): Promise<ValidateGraphUseCaseResult> {
+  const rawGraph =
+    args.schemaValidator && args.graphRepository.loadJson
+      ? await loadGraphJsonForSchemaValidation(args.graphRepository)
+      : undefined;
+  if (isJsonLoadFailure(rawGraph)) {
+    const validation: GraphValidationResult = {
+      graphVersion: 0,
+      status: "error",
+      schemaStatus: "error",
+      schemaErrors: [
+        {
+          code: "invalid_json",
+          message: rawGraph.message
+        }
+      ],
+      semanticErrors: [],
+      semanticWarnings: [],
+      readinessSummary: emptyReadinessSummary(),
+      readinessSnapshots: {}
+    };
+
+    return {
+      validation,
+      exitCode: 1
+    };
+  }
+
+  const schemaReport = rawGraph === undefined ? undefined : await validateGraphJsonSchema(args.schemaValidator, rawGraph);
+
+  if (schemaReport?.status === "error") {
+    const validation: GraphValidationResult = {
+      graphVersion: graphVersionFromJson(rawGraph),
+      status: "error",
+      schemaStatus: "error",
+      schemaErrors: schemaReport.errors,
+      semanticErrors: [],
+      semanticWarnings: [],
+      readinessSummary: emptyReadinessSummary(),
+      readinessSnapshots: {}
+    };
+
+    return {
+      validation,
+      exitCode: 1
+    };
+  }
+
+  const validation = validatePlanningGraph(rawGraph === undefined ? await args.graphRepository.load() : parsePlanningGraphJson(rawGraph));
+  const validationWithSchema: GraphValidationResult = schemaReport
+    ? { ...validation, schemaStatus: schemaReport.status, schemaErrors: schemaReport.errors }
+    : validation;
+
   return {
-    validation,
-    exitCode: validation.status === "error" ? 1 : 0
+    validation: validationWithSchema,
+    exitCode: validationWithSchema.status === "error" ? 1 : 0
   };
 }
 
@@ -522,6 +589,64 @@ function isEmptyPlanningGraph(graph: PlanningGraph): boolean {
   return graph.nodes.length === 0 && graph.edges.length === 0;
 }
 
+function graphVersionFromJson(value: unknown): number {
+  if (value && typeof value === "object" && !Array.isArray(value) && "graph_version" in value) {
+    const rawVersion = value.graph_version;
+    return typeof rawVersion === "number" && Number.isInteger(rawVersion) ? rawVersion : 0;
+  }
+
+  return 0;
+}
+
+type JsonLoadFailure = {
+  readonly failed: true;
+  readonly message: string;
+};
+
+async function loadGraphJsonForSchemaValidation(graphRepository: GraphRepository): Promise<unknown | JsonLoadFailure> {
+  try {
+    return await graphRepository.loadJson?.();
+  } catch (error) {
+    return {
+      failed: true,
+      message: `planning/graph.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
+async function validateGraphJsonSchema(
+  schemaValidator: JsonSchemaValidator | undefined,
+  rawGraph: unknown
+): Promise<SchemaValidationReport | undefined> {
+  try {
+    return await schemaValidator?.validate(rawGraph);
+  } catch (error) {
+    return {
+      status: "error",
+      errors: [
+        {
+          code: "schema_validation_unavailable",
+          message: error instanceof Error ? error.message : String(error)
+        }
+      ]
+    };
+  }
+}
+
+function isJsonLoadFailure(value: unknown): value is JsonLoadFailure {
+  return Boolean(value && typeof value === "object" && "failed" in value && value.failed === true);
+}
+
+function emptyReadinessSummary(): GraphValidationResult["readinessSummary"] {
+  return {
+    afkReady: [],
+    agentEligible: [],
+    blocked: [],
+    hitlGated: [],
+    humanOnly: []
+  };
+}
+
 const starterDirectories = [
   "planning",
   "planning/intake",
@@ -540,6 +665,10 @@ const starterFiles = [
   {
     path: "planning/change-log.ndjson",
     content: ""
+  },
+  {
+    path: "planning/graph.schema.json",
+    content: graphSchemaTemplate
   },
   {
     path: "planning/graph.json",

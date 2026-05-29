@@ -8,11 +8,13 @@ import {
   FileProjectionWriter,
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
-  FileWorkspaceInitializer
+  FileWorkspaceInitializer,
+  FilePlanningGraphSchemaValidator
 } from "../index.js";
 
 const result = await runPlannerCli(process.argv.slice(2), {
   graphRepository: new FilePlanningGraphRepository(),
+  graphSchemaValidator: new FilePlanningGraphSchemaValidator(),
   projectionWriter: new FileProjectionWriter(),
   projectionReader: new FileProjectionReader(),
   changeLogWriter: new FileChangeLogWriter(),

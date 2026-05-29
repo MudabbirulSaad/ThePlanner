@@ -27,9 +27,9 @@ node ../../dist/src/adapters/cli/index.js reconcile --json
 - `npm test`: Vitest reports all test files and tests passing.
 - `npm run lint`: ESLint completes without findings.
 - `npm run check`: build, tests, and lint all pass.
-- `npm run validate:graph`: reports the clean starter graph with `graph_version: 1`, `status: pass`, `errors: 0`, and `warnings: 0`.
+- `npm run validate:graph`: reports the clean starter graph with `graph_version: 1`, `status: pass`, `schema_status: pass`, `schema_errors: 0`, `errors: 0`, and `warnings: 0`.
 - `status --json`: reports graph version 6, status `pass`, all eight Work Items AFK-ready and agent-eligible, and no blocked or HITL-gated Work Items.
-- `validate --json`: reports semantic status, errors, warnings, readiness summary, and readiness snapshots.
+- `validate --json`: reports schema status, schema errors, semantic status, errors, warnings, readiness summary, and readiness snapshots.
 - `export --dry-run --json`: reports deterministic projection paths that would be created, updated, or left unchanged without writing files, plus possible human-authored Markdown sections that apply would overwrite.
 - `export --apply --json`: writes deterministic projection paths from the graph. Projection Markdown is generated output, so review dry-run output first when local notes may exist.
 - `reconcile --json`: reports proposed safe patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
@@ -40,7 +40,7 @@ The demo `examples/ai-engineering-planner-v1/planning/graph.json` is the source 
 
 Markdown-first repository export renders graph state into local, diffable artifacts under the demo workspace's `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` paths. These files are projections, not independent canonical state.
 
-Validation checks graph semantics and derives readiness. In the current MVP graph, all eight Work Items are done, AFK-ready, and agent-eligible.
+Validation checks graph JSON Schema shape, graph semantics, and derived readiness. In the current MVP graph, all eight Work Items are done, AFK-ready, and agent-eligible.
 
 Projection rendering writes predictable Markdown and structured planning artifacts from the canonical graph. This supports repository-native review without external services.
 
@@ -53,6 +53,6 @@ The planning change log at `planning/change-log.ndjson` records graph-changing e
 - No live LLM calls.
 - No external tracker sync.
 - No autonomous coding-agent execution.
-- `planner plan` only supports dry-run JSON proposals from refined briefs; applying proposals is deferred.
-- CLI validation reports semantic validation; JSON Schema runtime validation is represented as `schemaStatus: "not_run"`.
+- `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs are deferred.
+- CLI validation runs JSON Schema validation before semantic validation; semantic validation is skipped when schema validation fails.
 - Reconciliation supports safe V1 fields and reports richer Markdown sections or unsupported relationships as `unsupportedProjectionEdits`.

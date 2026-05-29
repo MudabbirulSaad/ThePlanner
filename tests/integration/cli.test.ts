@@ -10,6 +10,7 @@ import {
   FileChangeLogWriter,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
+  FilePlanningGraphSchemaValidator,
   FileProjectionReader,
   FileProjectionWriter,
   FileRefinedBriefReader,
@@ -59,6 +60,80 @@ describe("planner CLI use case wiring", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ graphVersion: 1, status: "pass" });
   });
 
+  it("runs runtime JSON Schema validation before semantic validation", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-schema-pass-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["validate", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        graphSchemaValidator: new FilePlanningGraphSchemaValidator(join(originalCwd, "planning/graph.schema.json")),
+        projectionWriter: { writeAll: async () => undefined }
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "pass",
+        schemaStatus: "pass",
+        schemaErrors: []
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("reports schema errors and skips semantic validation for malformed graph shape", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-schema-fail-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile(
+        "planning/graph.json",
+        `${JSON.stringify(
+          {
+            schema_version: "0.1.0",
+            graph_version: 1,
+            nodes: {
+              requirements: []
+            },
+            edges: [{ source: "wi-missing", target: "req-missing", type: "satisfies", rationale: "Would fail semantically." }]
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      const result = await runPlannerCli(["validate", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        graphSchemaValidator: new FilePlanningGraphSchemaValidator(join(originalCwd, "planning/graph.schema.json")),
+        projectionWriter: { writeAll: async () => undefined }
+      });
+
+      const output = JSON.parse(result.stdout);
+      expect(result.exitCode).toBe(1);
+      expect(output).toMatchObject({
+        status: "error",
+        schemaStatus: "error",
+        semanticErrors: [],
+        semanticWarnings: []
+      });
+      expect(output.schemaErrors.map((error: { message: string }) => error.message)).toContain(
+        "$.nodes: missing required property decisions"
+      );
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("initializes a workspace and preserves existing files on rerun", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-init-"));
@@ -84,11 +159,15 @@ describe("planner CLI use case wiring", () => {
           "docs/architecture",
           "planning/intake/idea.md",
           "planning/change-log.ndjson",
+          "planning/graph.schema.json",
           "planning/graph.json"
         ]
       });
 
       const graphJson = JSON.parse(await readFile("planning/graph.json", "utf8"));
+      expect(JSON.parse(await readFile("planning/graph.schema.json", "utf8"))).toMatchObject({
+        title: "AI Engineering Planner Graph"
+      });
       expect(validatePlanningGraph(parsePlanningGraphJson(graphJson)).status).toBe("pass");
       expect(await readFile("planning/intake/idea.md", "utf8")).toContain("## Target Users");
 
@@ -325,10 +404,11 @@ describe("planner CLI use case wiring", () => {
 
       const validate = await runPlannerCli(["validate", "--json"], {
         graphRepository: new FilePlanningGraphRepository(),
+        graphSchemaValidator: new FilePlanningGraphSchemaValidator(join(originalCwd, "planning/graph.schema.json")),
         projectionWriter: { writeAll: async () => undefined }
       });
       expect(validate.exitCode).toBe(0);
-      expect(JSON.parse(validate.stdout)).toMatchObject({ status: "pass", graphVersion: 1 });
+      expect(JSON.parse(validate.stdout)).toMatchObject({ status: "pass", schemaStatus: "pass", graphVersion: 1 });
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
