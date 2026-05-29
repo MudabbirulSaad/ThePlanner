@@ -55,6 +55,7 @@ node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md
 node dist/src/adapters/cli/index.js reconcile --json
 node dist/src/adapters/cli/index.js reconcile --apply --json
 node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --dry-run --json
+node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --apply --json
 ```
 
 Command behavior:
@@ -71,6 +72,7 @@ Command behavior:
 - `reconcile`: reads Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
 - `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
 - `prepare <work-item-id> --agent <codex|claude|gemini> --dry-run --json`: verifies the Work Item exists and is agent-eligible, then prints a deterministic manual paste context bundle with `AGENTS.md`, the rendered Work Item projection, dependency view, related document projections, validation commands, and scope reminders. Dry run does not execute agents, write run artifacts, mutate source code, or mark Work Items done.
+- `prepare <work-item-id> --agent <codex|claude|gemini> --apply --json`: writes a local handoff record under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/` with `metadata.json`, `prompt.md`, and `context.md`. JSON reports the run id, metadata, and created paths. These run artifacts are not ignored by default because they are local, git-reviewable evidence of what was handed to an agent. Use `prompt.md` as the manual paste prompt and `context.md` to inspect or reproduce the exact context bundle. Apply mode does not execute an agent, mutate graph state, or mark Work Items done.
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
 

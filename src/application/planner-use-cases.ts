@@ -123,6 +123,15 @@ export interface ContextFileReader {
   readonly readIfExists: (path: string) => Promise<string | undefined>;
 }
 
+export interface AgentRunArtifactFile {
+  readonly path: string;
+  readonly content: string;
+}
+
+export interface AgentRunArtifactWriter {
+  readonly writeAll: (files: readonly AgentRunArtifactFile[]) => Promise<readonly string[] | void>;
+}
+
 export type SupportedAgent = "codex" | "claude" | "gemini";
 
 export interface AgentContextBundleSection {
@@ -133,11 +142,15 @@ export interface AgentContextBundleSection {
 
 export interface AgentContextBundleResult {
   readonly status: "prepared";
-  readonly dryRun: true;
-  readonly applied: false;
+  readonly dryRun: boolean;
+  readonly applied: boolean;
   readonly agent: SupportedAgent;
   readonly workItemId: string;
-  readonly bundlePath: null;
+  readonly runId: string | null;
+  readonly bundlePath: string | null;
+  readonly artifactPaths: readonly string[];
+  readonly createdPaths: readonly string[];
+  readonly metadata: AgentRunMetadata | null;
   readonly readiness: {
     readonly labels: readonly string[];
     readonly reasons: readonly string[];
@@ -146,6 +159,15 @@ export interface AgentContextBundleResult {
   readonly context: readonly AgentContextBundleSection[];
   readonly content: string;
   readonly message: string;
+}
+
+export interface AgentRunMetadata {
+  readonly runId: string;
+  readonly workItemId: string;
+  readonly graphVersion: number;
+  readonly agent: SupportedAgent;
+  readonly generatedAt: string;
+  readonly validationCommands: readonly string[];
 }
 
 export interface ValidateGraphUseCaseResult {
@@ -598,8 +620,11 @@ export async function reconcileGraphUseCase(args: {
 export async function prepareAgentContextBundleUseCase(args: {
   readonly graphRepository: GraphRepository;
   readonly contextFileReader: ContextFileReader;
+  readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly workItemId: string;
   readonly agent: string;
+  readonly apply?: boolean;
+  readonly timestamp?: string;
 }): Promise<AgentContextBundleResult> {
   const agent = parseSupportedAgent(args.agent);
   const graph = await args.graphRepository.load();
@@ -627,13 +652,66 @@ export async function prepareAgentContextBundleUseCase(args: {
     context
   });
 
+  if (args.apply) {
+    if (!args.runArtifactWriter) {
+      throw new Error("planner prepare --apply requires an agent run artifact writer");
+    }
+
+    const generatedAt = args.timestamp ?? new Date().toISOString();
+    const runId = createAgentRunId(generatedAt, workItem.id);
+    const runDirectory = `planning/runs/${runId}`;
+    const metadataPath = `${runDirectory}/metadata.json`;
+    const promptPath = `${runDirectory}/prompt.md`;
+    const contextPath = `${runDirectory}/context.md`;
+    const metadata: AgentRunMetadata = {
+      runId,
+      workItemId: workItem.id,
+      graphVersion: graph.graphVersion,
+      agent,
+      generatedAt,
+      validationCommands
+    };
+    const files: readonly AgentRunArtifactFile[] = [
+      { path: metadataPath, content: `${JSON.stringify(metadata, null, 2)}\n` },
+      { path: promptPath, content },
+      { path: contextPath, content: renderAgentContextMarkdown(context) }
+    ];
+    const writtenPaths = await args.runArtifactWriter.writeAll(files);
+    const artifactPaths = writtenPaths ? [...writtenPaths] : files.map((file) => file.path);
+
+    return {
+      status: "prepared",
+      dryRun: false,
+      applied: true,
+      agent,
+      workItemId: workItem.id,
+      runId,
+      bundlePath: promptPath,
+      artifactPaths,
+      createdPaths: artifactPaths,
+      metadata,
+      readiness: {
+        labels: readiness.labels,
+        reasons: readiness.reasons
+      },
+      validationCommands,
+      context,
+      content,
+      message: `Run artifacts written to ${runDirectory}. No agent was executed.`
+    };
+  }
+
   return {
     status: "prepared",
     dryRun: true,
     applied: false,
     agent,
     workItemId: workItem.id,
+    runId: null,
     bundlePath: null,
+    artifactPaths: [],
+    createdPaths: [],
+    metadata: null,
     readiness: {
       labels: readiness.labels,
       reasons: readiness.reasons
@@ -782,6 +860,31 @@ function renderAgentContextBundle(args: {
       ""
     ])
   ].join("\n");
+}
+
+function renderAgentContextMarkdown(context: readonly AgentContextBundleSection[]): string {
+  return [
+    "# Agent Run Context",
+    "",
+    ...context.flatMap((section) => [
+      `## ${section.path}`,
+      "",
+      `Source: ${section.source}`,
+      "",
+      fence("markdown", section.content),
+      ""
+    ])
+  ].join("\n");
+}
+
+function createAgentRunId(timestamp: string, workItemId: string): string {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid prepare timestamp: ${timestamp}`);
+  }
+
+  const compactTimestamp = date.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "").replace("T", "-");
+  return `run-${compactTimestamp}-${workItemId}`;
 }
 
 function parseSupportedAgent(agent: string): SupportedAgent {

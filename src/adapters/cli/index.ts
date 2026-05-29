@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runPlannerCli } from "../../application/index.js";
 import {
+  FileAgentRunArtifactWriter,
   FileChangeLogWriter,
   FileContextReader,
   FileIntakeIdeaReader,
@@ -23,7 +24,8 @@ const result = await runPlannerCli(process.argv.slice(2), {
   intakeIdeaReader: new FileIntakeIdeaReader(),
   refinedBriefReader: new FileRefinedBriefReader(),
   refinedBriefWriter: new FileRefinedBriefWriter(),
-  contextFileReader: new FileContextReader()
+  contextFileReader: new FileContextReader(),
+  runArtifactWriter: new FileAgentRunArtifactWriter()
 });
 
 if (result.stdout) {

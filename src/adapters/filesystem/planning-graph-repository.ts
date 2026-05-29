@@ -3,6 +3,8 @@ import { basename, dirname, resolve } from "node:path";
 
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "../../application/index.js";
 import type {
+  AgentRunArtifactFile,
+  AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
   GraphRepository,
@@ -109,6 +111,20 @@ export class FileChangeLogWriter implements ChangeLogWriter {
     const resolvedPath = resolve(this.path);
     await mkdir(dirname(resolvedPath), { recursive: true });
     await appendFile(resolvedPath, `${JSON.stringify(event)}\n`, "utf8");
+  }
+}
+
+export class FileAgentRunArtifactWriter implements AgentRunArtifactWriter {
+  public async writeAll(files: readonly AgentRunArtifactFile[]): Promise<readonly string[]> {
+    const writtenPaths: string[] = [];
+    for (const file of files) {
+      const resolvedPath = resolve(file.path);
+      await mkdir(dirname(resolvedPath), { recursive: true });
+      await writeFile(resolvedPath, file.content, { encoding: "utf8", flag: "wx" });
+      writtenPaths.push(file.path);
+    }
+
+    return writtenPaths;
   }
 }
 

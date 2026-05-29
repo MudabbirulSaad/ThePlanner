@@ -17,6 +17,7 @@ import {
   validateGraphUseCase
 } from "./planner-use-cases.js";
 import type {
+  AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
   GraphRepository,
@@ -40,6 +41,8 @@ export interface PlannerCliServices {
   readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
   readonly contextFileReader?: ContextFileReader;
+  readonly runArtifactWriter?: AgentRunArtifactWriter;
+  readonly currentTimestamp?: () => string;
 }
 
 type RenderableIntakeQuestionResult = {
@@ -241,16 +244,25 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner prepare requires --agent <codex|claude|gemini>\n" };
     }
 
-    if (!rest.includes("--dry-run")) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare currently requires --dry-run\n" };
+    const dryRun = rest.includes("--dry-run");
+    const apply = rest.includes("--apply");
+    if (dryRun === apply) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare requires exactly one of --dry-run or --apply\n" };
+    }
+
+    if (apply && !services.runArtifactWriter) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare --apply requires an agent run artifact writer\n" };
     }
 
     try {
       const result = await prepareAgentContextBundleUseCase({
         graphRepository: services.graphRepository,
         contextFileReader: services.contextFileReader,
+        runArtifactWriter: services.runArtifactWriter,
         workItemId,
-        agent
+        agent,
+        apply,
+        timestamp: services.currentTimestamp?.()
       });
       return render(0, result, json);
     } catch (error) {
@@ -331,7 +343,7 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
   if (isAgentContextBundleResult(value)) {
     return {
       exitCode,
-      stdout: `${value.content}\n`,
+      stdout: value.dryRun ? `${value.content}\n` : `${value.message}\n${value.artifactPaths.join("\n")}\n`,
       stderr: ""
     };
   }
@@ -410,8 +422,9 @@ function isRefinedBriefResult(value: unknown): value is {
 
 function isAgentContextBundleResult(value: unknown): value is {
   readonly content: string;
-  readonly dryRun: true;
-  readonly applied: false;
+  readonly dryRun: boolean;
+  readonly artifactPaths: readonly string[];
+  readonly message: string;
 } {
   return Boolean(
     value &&
@@ -419,9 +432,11 @@ function isAgentContextBundleResult(value: unknown): value is {
       "content" in value &&
       typeof value.content === "string" &&
       "dryRun" in value &&
-      value.dryRun === true &&
-      "applied" in value &&
-      value.applied === false
+      typeof value.dryRun === "boolean" &&
+      "artifactPaths" in value &&
+      Array.isArray(value.artifactPaths) &&
+      "message" in value &&
+      typeof value.message === "string"
   );
 }
 

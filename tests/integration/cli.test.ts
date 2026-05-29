@@ -7,6 +7,7 @@ import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
 import { serializePlanningGraphJson } from "../../src/application/index.js";
 import {
+  FileAgentRunArtifactWriter,
   FileChangeLogWriter,
   FileContextReader,
   FileIntakeIdeaReader,
@@ -625,7 +626,11 @@ describe("planner CLI use case wiring", () => {
         applied: false,
         agent: "codex",
         workItemId: "wi-001",
+        runId: null,
         bundlePath: null,
+        artifactPaths: [],
+        createdPaths: [],
+        metadata: null,
         validationCommands: ["npm test"],
         context: [
           { path: "AGENTS.md", source: "workspace" },
@@ -640,6 +645,68 @@ describe("planner CLI use case wiring", () => {
       expect(output.content).toContain("## Context: planning/dependencies.md");
       expect(output.content).toContain("## Context: docs/architecture/proposed-architecture.md");
       expect(await listWorkspaceFiles(".")).toEqual(before);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("writes deterministic prepare run artifacts in apply mode without executing agents", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-prepare-apply-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("AGENTS.md", "# Repo Instructions\n\nStay in scope.\n", "utf8");
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => { throw new Error("prepare apply must not write projections"); } },
+        contextFileReader: new FileContextReader(),
+        runArtifactWriter: new FileAgentRunArtifactWriter(),
+        currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toMatchObject({
+        status: "prepared",
+        dryRun: false,
+        applied: true,
+        agent: "codex",
+        workItemId: "wi-001",
+        runId: "run-20260529-123456-wi-001",
+        bundlePath: "planning/runs/run-20260529-123456-wi-001/prompt.md",
+        artifactPaths: [
+          "planning/runs/run-20260529-123456-wi-001/metadata.json",
+          "planning/runs/run-20260529-123456-wi-001/prompt.md",
+          "planning/runs/run-20260529-123456-wi-001/context.md"
+        ],
+        createdPaths: [
+          "planning/runs/run-20260529-123456-wi-001/metadata.json",
+          "planning/runs/run-20260529-123456-wi-001/prompt.md",
+          "planning/runs/run-20260529-123456-wi-001/context.md"
+        ],
+        metadata: {
+          runId: "run-20260529-123456-wi-001",
+          workItemId: "wi-001",
+          graphVersion: 1,
+          agent: "codex",
+          generatedAt: "2026-05-29T12:34:56.000Z",
+          validationCommands: ["npm test"]
+        }
+      });
+
+      const metadata = JSON.parse(await readFile("planning/runs/run-20260529-123456-wi-001/metadata.json", "utf8"));
+      expect(metadata).toEqual(output.metadata);
+      await expect(readFile("planning/runs/run-20260529-123456-wi-001/prompt.md", "utf8")).resolves.toContain(
+        "# Agent Context Bundle"
+      );
+      await expect(readFile("planning/runs/run-20260529-123456-wi-001/context.md", "utf8")).resolves.toContain(
+        "## AGENTS.md"
+      );
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
