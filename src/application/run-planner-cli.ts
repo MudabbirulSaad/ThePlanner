@@ -6,6 +6,7 @@ export interface PlannerCliResult {
 
 import {
   exportProjectionsUseCase,
+  initWorkspaceUseCase,
   reconcileGraphUseCase,
   statusUseCase,
   validateGraphUseCase
@@ -14,7 +15,8 @@ import type {
   ChangeLogWriter,
   GraphRepository,
   ProjectionReader,
-  ProjectionWriter
+  ProjectionWriter,
+  WorkspaceInitializer
 } from "./planner-use-cases.js";
 
 export interface PlannerCliServices {
@@ -22,6 +24,7 @@ export interface PlannerCliServices {
   readonly projectionWriter: ProjectionWriter;
   readonly projectionReader?: ProjectionReader;
   readonly changeLogWriter?: ChangeLogWriter;
+  readonly workspaceInitializer?: WorkspaceInitializer;
 }
 
 export async function runPlannerCli(
@@ -43,6 +46,15 @@ export async function runPlannerCli(
 
   if (command === "export") {
     const result = await exportProjectionsUseCase(services.graphRepository, services.projectionWriter);
+    return render(0, result, json);
+  }
+
+  if (command === "init") {
+    if (!services.workspaceInitializer) {
+      return { exitCode: 1, stdout: "", stderr: "planner init requires a workspace initializer\n" };
+    }
+
+    const result = await initWorkspaceUseCase(services.workspaceInitializer);
     return render(0, result, json);
   }
 
@@ -100,11 +112,32 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
     };
   }
 
+  if (isWorkspaceInitResult(value)) {
+    return {
+      exitCode,
+      stdout: [
+        "workspace initialized",
+        ...value.entries.map((entry) => `${entry.status}: ${entry.path}`),
+        ""
+      ].join("\n"),
+      stderr: ""
+    };
+  }
+
   return {
     exitCode,
     stdout: `${JSON.stringify(value)}\n`,
     stderr: ""
   };
+}
+
+function isWorkspaceInitResult(value: unknown): value is {
+  readonly entries: readonly {
+    readonly path: string;
+    readonly status: string;
+  }[];
+} {
+  return Boolean(value && typeof value === "object" && "entries" in value && Array.isArray(value.entries));
 }
 
 function isValidation(value: unknown): value is {

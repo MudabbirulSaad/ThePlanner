@@ -43,6 +43,7 @@ The local binary is declared as `planner` and builds to `dist/src/adapters/cli/i
 Use the built CLI directly during development:
 
 ```sh
+node dist/src/adapters/cli/index.js init --json
 node dist/src/adapters/cli/index.js status --json
 node dist/src/adapters/cli/index.js validate --json
 node dist/src/adapters/cli/index.js export --json
@@ -52,6 +53,7 @@ node dist/src/adapters/cli/index.js reconcile --apply --json
 
 Command behavior:
 
+- `init`: creates missing starter directories and files for a planning workspace, including `planning/intake/idea.md`, `planning/change-log.ndjson`, and a minimal valid `planning/graph.json`; existing files are reported and left untouched.
 - `status`: returns graph version, validation status, and readiness summary.
 - `validate`: returns schema status, semantic errors, semantic warnings, readiness summary, and readiness snapshots.
 - `export`: writes deterministic projections from the canonical graph.

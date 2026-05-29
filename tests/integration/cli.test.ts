@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
+import { FileWorkspaceInitializer } from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
+import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
 import type { PlanningGraph } from "../../src/core/index.js";
 
@@ -42,6 +47,54 @@ describe("planner CLI use case wiring", () => {
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ graphVersion: 1, status: "pass" });
+  });
+
+  it("initializes a workspace and preserves existing files on rerun", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-init-"));
+
+    try {
+      process.chdir(workspace);
+
+      const first = await runPlannerCli(["init", "--json"], {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        workspaceInitializer: new FileWorkspaceInitializer()
+      });
+
+      expect(first.exitCode).toBe(0);
+      expect(JSON.parse(first.stdout)).toMatchObject({
+        created: [
+          "planning",
+          "planning/intake",
+          "planning/work-items",
+          "planning/execution-slices",
+          "docs/prd",
+          "docs/rfc",
+          "docs/architecture",
+          "planning/intake/idea.md",
+          "planning/change-log.ndjson",
+          "planning/graph.json"
+        ]
+      });
+
+      const graphJson = JSON.parse(await readFile("planning/graph.json", "utf8"));
+      expect(validatePlanningGraph(parsePlanningGraphJson(graphJson)).status).toBe("pass");
+
+      await writeFile("planning/intake/idea.md", "do not overwrite\n", "utf8");
+      const second = await runPlannerCli(["init", "--json"], {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        workspaceInitializer: new FileWorkspaceInitializer()
+      });
+
+      expect(second.exitCode).toBe(0);
+      expect(JSON.parse(second.stdout).existing).toContain("planning/intake/idea.md");
+      expect(await readFile("planning/intake/idea.md", "utf8")).toBe("do not overwrite\n");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
   });
 
   it("reports projection paths returned by the writer during export", async () => {

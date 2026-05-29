@@ -7,7 +7,9 @@ import type {
   GraphRepository,
   PlanningChangeLogEvent,
   ProjectionReader,
-  ProjectionWriter
+  ProjectionWriter,
+  WorkspaceInitializer,
+  WorkspaceEntryStatus
 } from "../../application/index.js";
 import type { PlanningGraph } from "../../core/index.js";
 import type { RenderedProjection } from "../../core/index.js";
@@ -64,6 +66,28 @@ export class FileChangeLogWriter implements ChangeLogWriter {
   }
 }
 
+export class FileWorkspaceInitializer implements WorkspaceInitializer {
+  public async ensureDirectory(path: string): Promise<WorkspaceEntryStatus> {
+    const createdPath = await mkdir(resolve(path), { recursive: true });
+    return createdPath ? "created" : "existing";
+  }
+
+  public async writeFileIfMissing(path: string, content: string): Promise<WorkspaceEntryStatus> {
+    const resolvedPath = resolve(path);
+    await mkdir(dirname(resolvedPath), { recursive: true });
+
+    try {
+      await writeFile(resolvedPath, content, { encoding: "utf8", flag: "wx" });
+      return "created";
+    } catch (error) {
+      if (isAlreadyExists(error)) {
+        return "existing";
+      }
+      throw error;
+    }
+  }
+}
+
 async function resolveProjectionPath(path: string): Promise<string> {
   try {
     await readFile(resolve(path), "utf8");
@@ -96,4 +120,8 @@ async function resolveProjectionPath(path: string): Promise<string> {
 
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
 }

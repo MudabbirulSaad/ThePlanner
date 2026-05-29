@@ -43,6 +43,20 @@ export interface ChangeLogWriter {
   readonly append: (event: PlanningChangeLogEvent) => Promise<void>;
 }
 
+export type WorkspaceEntryKind = "directory" | "file";
+export type WorkspaceEntryStatus = "created" | "existing";
+
+export interface WorkspaceInitEntry {
+  readonly path: string;
+  readonly kind: WorkspaceEntryKind;
+  readonly status: WorkspaceEntryStatus;
+}
+
+export interface WorkspaceInitializer {
+  readonly ensureDirectory: (path: string) => Promise<WorkspaceEntryStatus>;
+  readonly writeFileIfMissing: (path: string, content: string) => Promise<WorkspaceEntryStatus>;
+}
+
 export interface ValidateGraphUseCaseResult {
   readonly validation: GraphValidationResult;
   readonly exitCode: number;
@@ -77,6 +91,40 @@ export async function exportProjectionsUseCase(
   const projections = renderAllProjections(graph);
   const exported = await projectionWriter.writeAll(projections);
   return { exported: exported ?? projections.map((projection) => projection.path) };
+}
+
+export async function initWorkspaceUseCase(
+  workspaceInitializer: WorkspaceInitializer
+): Promise<{
+  readonly status: "initialized";
+  readonly entries: readonly WorkspaceInitEntry[];
+  readonly created: readonly string[];
+  readonly existing: readonly string[];
+}> {
+  const entries: WorkspaceInitEntry[] = [];
+
+  for (const path of starterDirectories) {
+    entries.push({
+      path,
+      kind: "directory",
+      status: await workspaceInitializer.ensureDirectory(path)
+    });
+  }
+
+  for (const file of starterFiles) {
+    entries.push({
+      path: file.path,
+      kind: "file",
+      status: await workspaceInitializer.writeFileIfMissing(file.path, file.content)
+    });
+  }
+
+  return {
+    status: "initialized",
+    entries,
+    created: entries.filter((entry) => entry.status === "created").map((entry) => entry.path),
+    existing: entries.filter((entry) => entry.status === "existing").map((entry) => entry.path)
+  };
 }
 
 export async function reconcileGraphUseCase(args: {
@@ -173,3 +221,53 @@ export function createChangeLogEvent(args: {
     provenance_reference: args.provenanceReference
   };
 }
+
+const starterDirectories = [
+  "planning",
+  "planning/intake",
+  "planning/work-items",
+  "planning/execution-slices",
+  "docs/prd",
+  "docs/rfc",
+  "docs/architecture"
+] as const;
+
+const starterFiles = [
+  {
+    path: "planning/intake/idea.md",
+    content: `# Idea
+
+Describe the software idea, target users, main workflow, constraints, and any open questions.
+`
+  },
+  {
+    path: "planning/change-log.ndjson",
+    content: ""
+  },
+  {
+    path: "planning/graph.json",
+    content: `${JSON.stringify(
+      {
+        schema_version: "0.1.0",
+        graph_version: 1,
+        generated_at: "2026-05-29T00:00:00+10:00",
+        source: "starter-workspace",
+        nodes: {
+          requirements: [],
+          decisions: [],
+          assumptions: [],
+          risks: [],
+          open_questions: [],
+          hitl_gates: [],
+          components: [],
+          work_items: [],
+          document_projections: [],
+          execution_slices: []
+        },
+        edges: []
+      },
+      null,
+      2
+    )}\n`
+  }
+] as const;
