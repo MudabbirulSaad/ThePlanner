@@ -11,6 +11,7 @@ As a user, I want the planner to recognize multiple local coding agents, so I ca
 ## Scope
 
 - Add runner adapter stubs/config for:
+  - codex
   - Claude Code
   - Gemini CLI
 - Support clear dry-run or missing-binary behavior.
@@ -52,4 +53,3 @@ When complete, move this file to:
 ```text
 issues/done/014-claude-and-gemini-runner-stubs.md
 ```
-
