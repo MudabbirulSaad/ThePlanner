@@ -14,6 +14,7 @@ import {
   FileRefinedBriefWriter,
   FileWorkspaceInitializer,
   FilePlanningGraphSchemaValidator,
+  GitHubDryRunTrackerSyncAdapter,
   createPlanningPathMapper,
   createLocalAgentRunner,
   loadFilePlannerConfig,
@@ -50,6 +51,7 @@ const result = await runPlannerCli(args, {
   runArtifactWriter: new FileAgentRunArtifactWriter(mapPlanningPath),
   agentRunner: createLocalAgentRunner({ commandOverride: runnerCommand, commands: config.agentCommands }),
   validationCommandRunner: new ProcessValidationCommandRunner(),
+  trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()],
   defaultAgent: config.defaultAgent,
   defaultValidationCommands: config.validationCommands
 });

@@ -17,6 +17,7 @@ import {
   reviewAgentRunUseCase,
   runAgentUseCase,
   statusUseCase,
+  syncTrackerDryRunUseCase,
   validateGraphUseCase
 } from "./planner-use-cases.js";
 import type {
@@ -32,6 +33,8 @@ import type {
   ProjectionWriter,
   RefinedBriefReader,
   RefinedBriefWriter,
+  SupportedTracker,
+  TrackerSyncAdapter,
   ValidationCommandRunner,
   SupportedAgent,
   WorkspaceInitializer
@@ -52,6 +55,7 @@ export interface PlannerCliServices {
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly agentRunner?: AgentRunner;
   readonly validationCommandRunner?: ValidationCommandRunner;
+  readonly trackerSyncAdapters?: readonly TrackerSyncAdapter[];
   readonly defaultAgent?: SupportedAgent;
   readonly defaultValidationCommands?: readonly string[];
   readonly currentTimestamp?: () => string;
@@ -238,6 +242,40 @@ export async function runPlannerCli(
         stdout: "",
         stderr: `${error instanceof Error ? error.message : String(error)}\n`
       };
+    }
+  }
+
+  if (command === "sync") {
+    const tracker = rest[0];
+    if (!tracker || tracker.startsWith("--")) {
+      return { exitCode: 1, stdout: "", stderr: "planner sync requires <tracker>\n" };
+    }
+
+    if (!isSupportedTracker(tracker)) {
+      return { exitCode: 1, stdout: "", stderr: `Unsupported tracker: ${tracker}\n` };
+    }
+
+    if (rest.includes("--apply")) {
+      return { exitCode: 1, stdout: "", stderr: "planner sync --apply is deferred; use --dry-run to preview tracker payloads\n" };
+    }
+
+    if (!rest.includes("--dry-run")) {
+      return { exitCode: 1, stdout: "", stderr: "planner sync requires --dry-run; live sync is deferred\n" };
+    }
+
+    const trackerAdapter = services.trackerSyncAdapters?.find((adapter) => adapter.tracker === tracker);
+    if (!trackerAdapter) {
+      return { exitCode: 1, stdout: "", stderr: `planner sync ${tracker} requires a tracker sync adapter\n` };
+    }
+
+    try {
+      const result = await syncTrackerDryRunUseCase({
+        graphRepository: services.graphRepository,
+        trackerAdapter
+      });
+      return render(0, result, json);
+    } catch (error) {
+      return renderError(error, json);
     }
   }
 
@@ -475,6 +513,10 @@ function readOption(args: readonly string[], option: string): string | undefined
   }
 
   return args[index + 1];
+}
+
+function isSupportedTracker(value: string): value is SupportedTracker {
+  return value === "github";
 }
 
 function isWorkspaceInitResult(value: unknown): value is {

@@ -138,6 +138,7 @@ export interface AgentRunArtifactReader {
 
 export type SupportedAgent = "codex" | "claude" | "gemini";
 export type RunnableAgent = SupportedAgent;
+export type SupportedTracker = "github";
 
 export interface AgentRunnerInput {
   readonly agent: RunnableAgent;
@@ -181,6 +182,37 @@ export interface ValidationCommandResult {
 
 export interface ValidationCommandRunner {
   readonly run: (input: ValidationCommandRunnerInput) => Promise<ValidationCommandResult>;
+}
+
+export interface TrackerIssueProposal {
+  readonly workItemId: string;
+  readonly title: string;
+  readonly body: string;
+  readonly labels: readonly string[];
+  readonly dependencies: readonly string[];
+  readonly references: readonly string[];
+}
+
+export interface TrackerSyncPreviewInput {
+  readonly graph: PlanningGraph;
+}
+
+export interface TrackerSyncPreview {
+  readonly issues: readonly TrackerIssueProposal[];
+}
+
+export interface TrackerSyncAdapter {
+  readonly tracker: SupportedTracker;
+  readonly preview: (input: TrackerSyncPreviewInput) => Promise<TrackerSyncPreview> | TrackerSyncPreview;
+}
+
+export interface TrackerSyncDryRunResult {
+  readonly status: "planned";
+  readonly tracker: SupportedTracker;
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly proposedIssues: readonly TrackerIssueProposal[];
+  readonly message: string;
 }
 
 export interface AgentRunValidationSummary {
@@ -400,6 +432,23 @@ export async function exportProjectionsUseCase(args: {
     dryRun: false,
     applied: true,
     exported: exported ?? projections.map((projection) => projection.path)
+  };
+}
+
+export async function syncTrackerDryRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly trackerAdapter: TrackerSyncAdapter;
+}): Promise<TrackerSyncDryRunResult> {
+  const graph = await args.graphRepository.load();
+  const preview = await args.trackerAdapter.preview({ graph });
+
+  return {
+    status: "planned",
+    tracker: args.trackerAdapter.tracker,
+    dryRun: true,
+    applied: false,
+    proposedIssues: preview.issues,
+    message: `Dry run planned ${preview.issues.length} ${args.trackerAdapter.tracker} issue(s). No external tracker was mutated.`
   };
 }
 

@@ -18,6 +18,7 @@ import {
   FileProjectionWriter,
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
+  GitHubDryRunTrackerSyncAdapter,
   FileWorkspaceInitializer
 } from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
@@ -62,6 +63,60 @@ describe("planner CLI use case wiring", () => {
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ graphVersion: 1, status: "pass" });
+  });
+
+  it("previews GitHub tracker sync as a dry run without external writes", async () => {
+    const result = await runPlannerCli(["sync", "github", "--dry-run", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "planned",
+      tracker: "github",
+      dryRun: true,
+      applied: false,
+      proposedIssues: [
+        {
+          workItemId: "wi-001",
+          title: "wi-001: Work",
+          labels: ["planner", "readiness:agent_eligible", "state:backlog", "work-item"],
+          dependencies: [],
+          references: ["req-001"]
+        }
+      ],
+      message: "Dry run planned 1 github issue(s). No external tracker was mutated."
+    });
+  });
+
+  it("rejects tracker sync without dry-run because live sync is deferred", async () => {
+    const result = await runPlannerCli(["sync", "github", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
+    });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: "planner sync requires --dry-run; live sync is deferred\n"
+    });
+  });
+
+  it("rejects tracker sync apply because external mutation is deferred", async () => {
+    const result = await runPlannerCli(["sync", "github", "--dry-run", "--apply", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
+    });
+
+    expect(result).toEqual({
+      exitCode: 1,
+      stdout: "",
+      stderr: "planner sync --apply is deferred; use --dry-run to preview tracker payloads\n"
+    });
   });
 
   it("uses configured default agent and validation command defaults", async () => {

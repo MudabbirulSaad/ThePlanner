@@ -15,7 +15,7 @@ The MVP is local and repository-first:
 - Reconciliation inspects Work Item Markdown and proposes safe graph patches without mutating unless `--apply` is passed.
 - Planning changes are recorded in `planning/change-log.ndjson` for graph-changing flows.
 
-External tracker sync, live LLM calls, and autonomous execution are outside V1.
+External tracker live sync, live LLM calls, and autonomous execution are outside V1.
 
 ## Setup
 
@@ -91,6 +91,7 @@ npm exec planner -- run wi-001 --agent gemini --json
 npm exec planner -- run review run-YYYYMMDD-HHMMSS-wi-001 --json
 npm exec planner -- run accept run-YYYYMMDD-HHMMSS-wi-001 --json
 npm exec planner -- run reject run-YYYYMMDD-HHMMSS-wi-001 --json
+npm exec planner -- sync github --dry-run --json
 ```
 
 Command behavior:
@@ -111,6 +112,7 @@ Command behavior:
 - `run <work-item-id> --agent <codex|claude|gemini> --json`: verifies the Work Item is agent-eligible and AFK-ready, creates the same context bundle, invokes the selected local coding-agent CLI, then runs the Work Item validation commands. It writes `metadata.json`, `prompt.md`, `context.md`, `runner-stdout.log`, `runner-stderr.log`, `validation-stdout.log`, `validation-stderr.log`, and `result.json` under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/`. Missing binaries return failed JSON with `runner.error.code: runner_not_found`; Codex auth preflight failures return `runner.error.code: runner_auth_failed`; validation failures return failed JSON with `validation.status: "fail"`. Running a coding agent may modify your working tree; review the saved run artifacts and working tree before accepting any changes.
 - `run review <run-id> --json`: reads saved `metadata.json` and `result.json` from `planning/runs/<run-id>/` and summarizes the Work Item, agent exit code, validation results, changed files when present in the run result, and artifact paths.
 - `run accept <run-id> --json` / `run reject <run-id> --json`: appends an audit event to `planning/change-log.ndjson` for the human decision. These commands do not change Work Item state, commit files, or delete run artifacts.
+- `sync github --dry-run --json`: previews deterministic GitHub Issue payloads for Work Items, including title, body, labels, dependencies, and references. Dry run does not require credentials, call GitHub, create issues, or mutate external trackers. Live tracker sync is deferred.
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
 
@@ -169,7 +171,7 @@ The repository follows Hexagonal Architecture:
 - `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
 - Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. Broader schema evolution and migrations are deferred.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
-- External tracker sync is deferred.
+- External tracker sync is limited to `sync github --dry-run --json`; live external issue creation and credentialed tracker APIs are deferred.
 - LLM cloud API adapters and live provider calls are not implemented.
 - `planner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
 - Validation commands are executed directly as argv-style process commands. Shell operators such as `&&` require an explicit shell command wrapper.
