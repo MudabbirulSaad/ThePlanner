@@ -71,6 +71,30 @@ export class FileProjectionReader implements ProjectionReader {
     );
     return projections;
   }
+
+  public async readExistingMany(paths: readonly string[]) {
+    const projections = await Promise.all(
+      paths.map(async (path) => {
+        const resolvedPath = await resolveProjectionPath(path);
+        try {
+          return {
+            requestedPath: path,
+            path: resolvedPath,
+            content: await readFile(resolve(resolvedPath), "utf8")
+          };
+        } catch (error) {
+          if (isNotFound(error)) {
+            return {
+              requestedPath: path,
+              path: resolvedPath
+            };
+          }
+          throw error;
+        }
+      })
+    );
+    return projections;
+  }
 }
 
 export class FileChangeLogWriter implements ChangeLogWriter {

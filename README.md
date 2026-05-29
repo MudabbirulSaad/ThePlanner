@@ -46,7 +46,8 @@ Use the built CLI directly during development:
 node dist/src/adapters/cli/index.js init --json
 node dist/src/adapters/cli/index.js status --json
 node dist/src/adapters/cli/index.js validate --json
-node dist/src/adapters/cli/index.js export --json
+node dist/src/adapters/cli/index.js export --dry-run --json
+node dist/src/adapters/cli/index.js export --apply --json
 node dist/src/adapters/cli/index.js intake questions --from planning/intake/idea.md --json
 node dist/src/adapters/cli/index.js intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
 node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --dry-run --json
@@ -60,7 +61,8 @@ Command behavior:
 - `init`: creates missing starter directories and files for a planning workspace, including `planning/intake/idea.md`, `planning/change-log.ndjson`, and a minimal valid `planning/graph.json`; existing files are reported and left untouched.
 - `status`: returns graph version, validation status, and readiness summary.
 - `validate`: returns schema status, semantic errors, semantic warnings, readiness summary, and readiness snapshots.
-- `export`: writes deterministic projections from the canonical graph.
+- `export --dry-run --json`: previews deterministic projection writes from the canonical graph without changing files. JSON reports files that would be created, updated, unchanged, and Markdown sections that may contain human-authored notes an apply would overwrite.
+- `export --apply --json`: writes deterministic projections from the canonical graph. Projection files are generated artifacts; applying export overwrites the full rendered file content. Bare `export` is retained as a compatibility alias for apply.
 - `intake questions --from <file>`: reads a rough intake idea and prints deterministic grilling questions grouped by target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions. Add `--json` for structured output. Paste the human-readable output into Codex, Claude, or Gemini to run a manual grilling conversation before creating a refined brief.
 - `intake refine --from <file> --out <file>`: creates a user-owned refined brief Markdown scaffold with TODO sections for product summary, users, goals, MVP scope, non-goals, constraints, success criteria, and open questions. Existing files are reported as skipped and left untouched unless `--force` is passed. Fill this brief manually or with an agent before planning from it.
 - `plan --from <file> --dry-run --json`: reads a refined brief and prints a deterministic valid graph proposal without writing `planning/graph.json` or exporting projections. The proposal is conservative and includes scaffold notes where fields are inferred.

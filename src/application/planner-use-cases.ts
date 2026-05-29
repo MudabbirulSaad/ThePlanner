@@ -31,6 +31,28 @@ export interface ProjectionWriter {
 
 export interface ProjectionReader {
   readonly readMany: (paths: readonly string[]) => Promise<readonly ProjectionInput[]>;
+  readonly readExistingMany?: (paths: readonly string[]) => Promise<readonly ExistingProjectionInput[]>;
+}
+
+export interface ExistingProjectionInput {
+  readonly requestedPath: string;
+  readonly path: string;
+  readonly content?: string;
+}
+
+export type ProjectionExportStatus = "created" | "updated" | "unchanged";
+
+export interface ProjectionExportEntry {
+  readonly path: string;
+  readonly requestedPath: string;
+  readonly status: ProjectionExportStatus;
+  readonly humanAuthoredSections: readonly string[];
+}
+
+export interface ProjectionOverwriteWarning {
+  readonly path: string;
+  readonly sections: readonly string[];
+  readonly reason: string;
 }
 
 export interface PlanningChangeLogEvent {
@@ -104,14 +126,113 @@ export async function statusUseCase(graphRepository: GraphRepository): Promise<{
   };
 }
 
-export async function exportProjectionsUseCase(
-  graphRepository: GraphRepository,
-  projectionWriter: ProjectionWriter
-): Promise<{ readonly exported: readonly string[] }> {
-  const graph = await graphRepository.load();
+export async function exportProjectionsUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly projectionWriter: ProjectionWriter;
+  readonly projectionReader?: ProjectionReader;
+  readonly apply: boolean;
+}): Promise<{
+  readonly dryRun: boolean;
+  readonly applied: boolean;
+  readonly created: readonly string[];
+  readonly updated: readonly string[];
+  readonly unchanged: readonly string[];
+  readonly humanAuthoredWarnings: readonly ProjectionOverwriteWarning[];
+  readonly projections: readonly ProjectionExportEntry[];
+  readonly exported?: readonly string[];
+}> {
+  const graph = await args.graphRepository.load();
   const projections = renderAllProjections(graph);
-  const exported = await projectionWriter.writeAll(projections);
-  return { exported: exported ?? projections.map((projection) => projection.path) };
+  const plan = await planProjectionExport(args.projectionReader, projections);
+
+  if (!args.apply) {
+    return {
+      ...plan,
+      dryRun: true,
+      applied: false
+    };
+  }
+
+  const exported = await args.projectionWriter.writeAll(projections);
+  return {
+    ...plan,
+    dryRun: false,
+    applied: true,
+    exported: exported ?? projections.map((projection) => projection.path)
+  };
+}
+
+async function planProjectionExport(
+  projectionReader: ProjectionReader | undefined,
+  projections: readonly RenderedProjection[]
+): Promise<{
+  readonly created: readonly string[];
+  readonly updated: readonly string[];
+  readonly unchanged: readonly string[];
+  readonly humanAuthoredWarnings: readonly ProjectionOverwriteWarning[];
+  readonly projections: readonly ProjectionExportEntry[];
+}> {
+  const existingByRequestedPath = new Map<string, ExistingProjectionInput>();
+  if (projectionReader?.readExistingMany) {
+    for (const existing of await projectionReader.readExistingMany(projections.map((projection) => projection.path))) {
+      existingByRequestedPath.set(existing.requestedPath, existing);
+    }
+  }
+
+  const entries = projections.map((projection) => {
+    const existing = existingByRequestedPath.get(projection.path);
+    const status: ProjectionExportStatus =
+      existing?.content === undefined ? "created" : existing.content === projection.content ? "unchanged" : "updated";
+    const humanAuthoredSections =
+      status === "updated" && existing?.content !== undefined
+        ? detectPossibleHumanAuthoredSections(existing.content, projection.content)
+        : [];
+
+    return {
+      path: existing?.path ?? projection.path,
+      requestedPath: projection.path,
+      status,
+      humanAuthoredSections
+    };
+  });
+
+  return {
+    created: entries.filter((entry) => entry.status === "created").map((entry) => entry.path),
+    updated: entries.filter((entry) => entry.status === "updated").map((entry) => entry.path),
+    unchanged: entries.filter((entry) => entry.status === "unchanged").map((entry) => entry.path),
+    humanAuthoredWarnings: entries
+      .filter((entry) => entry.humanAuthoredSections.length > 0)
+      .map((entry) => ({
+        path: entry.path,
+        sections: entry.humanAuthoredSections,
+        reason: "Existing projection content differs from canonical output and may include human-authored Markdown that apply will overwrite."
+      })),
+    projections: entries
+  };
+}
+
+function detectPossibleHumanAuthoredSections(existingContent: string, renderedContent: string): readonly string[] {
+  const existingSections = markdownSections(existingContent);
+  const renderedSections = markdownSections(renderedContent);
+  const changedSections = [...existingSections.entries()]
+    .filter(([section, content]) => renderedSections.get(section) !== content)
+    .map(([section]) => section);
+
+  return changedSections.length === 0 ? ["frontmatter or top-level content"] : changedSections;
+}
+
+function markdownSections(content: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  const matches = [...content.matchAll(/^## (?<title>.+)$/gmu)];
+  for (const [index, match] of matches.entries()) {
+    const title = match.groups?.title.trim();
+    if (!title || match.index === undefined) {
+      continue;
+    }
+    const next = matches[index + 1]?.index ?? content.length;
+    sections.set(title, content.slice(match.index, next).trim());
+  }
+  return sections;
 }
 
 export async function initWorkspaceUseCase(

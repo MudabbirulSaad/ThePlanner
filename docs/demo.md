@@ -16,7 +16,8 @@ npm run validate:graph
 cd examples/ai-engineering-planner-v1
 node ../../dist/src/adapters/cli/index.js status --json
 node ../../dist/src/adapters/cli/index.js validate --json
-node ../../dist/src/adapters/cli/index.js export --json
+node ../../dist/src/adapters/cli/index.js export --dry-run --json
+node ../../dist/src/adapters/cli/index.js export --apply --json
 node ../../dist/src/adapters/cli/index.js reconcile --json
 ```
 
@@ -29,7 +30,8 @@ node ../../dist/src/adapters/cli/index.js reconcile --json
 - `npm run validate:graph`: reports the clean starter graph with `graph_version: 1`, `status: pass`, `errors: 0`, and `warnings: 0`.
 - `status --json`: reports graph version 6, status `pass`, all eight Work Items AFK-ready and agent-eligible, and no blocked or HITL-gated Work Items.
 - `validate --json`: reports semantic status, errors, warnings, readiness summary, and readiness snapshots.
-- `export --json`: reports deterministic projection paths written from the graph.
+- `export --dry-run --json`: reports deterministic projection paths that would be created, updated, or left unchanged without writing files, plus possible human-authored Markdown sections that apply would overwrite.
+- `export --apply --json`: writes deterministic projection paths from the graph. Projection Markdown is generated output, so review dry-run output first when local notes may exist.
 - `reconcile --json`: reports proposed safe patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
 
 ## MVP Flow

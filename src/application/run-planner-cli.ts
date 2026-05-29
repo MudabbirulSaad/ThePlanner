@@ -68,7 +68,21 @@ export async function runPlannerCli(
   }
 
   if (command === "export") {
-    const result = await exportProjectionsUseCase(services.graphRepository, services.projectionWriter);
+    const dryRun = rest.includes("--dry-run");
+    const apply = rest.includes("--apply");
+    if (dryRun && apply) {
+      return { exitCode: 1, stdout: "", stderr: "planner export accepts only one of --dry-run or --apply\n" };
+    }
+    if (dryRun && !services.projectionReader) {
+      return { exitCode: 1, stdout: "", stderr: "planner export --dry-run requires a projection reader\n" };
+    }
+
+    const result = await exportProjectionsUseCase({
+      graphRepository: services.graphRepository,
+      projectionWriter: services.projectionWriter,
+      projectionReader: services.projectionReader,
+      apply: !dryRun
+    });
     return render(0, result, json);
   }
 

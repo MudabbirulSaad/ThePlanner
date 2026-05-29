@@ -5,10 +5,13 @@ import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
+import { serializePlanningGraphJson } from "../../src/application/index.js";
 import {
   FileChangeLogWriter,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
+  FileProjectionReader,
+  FileProjectionWriter,
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
   FileWorkspaceInitializer
@@ -398,9 +401,119 @@ describe("planner CLI use case wiring", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      dryRun: false,
+      applied: true,
       exported: ["planning/work-items/wi-001-existing-name.md"]
     });
+  });
+
+  it("previews projection export without writing files", async () => {
+    const writes: string[] = [];
+    const result = await runPlannerCli(["export", "--dry-run", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: {
+        writeAll: async () => {
+          writes.push("write");
+          throw new Error("dry-run must not write projections");
+        }
+      },
+      projectionReader: {
+        readMany: async () => [],
+        readExistingMany: async (paths) =>
+          paths.map((path) => ({
+            requestedPath: path,
+            path
+          }))
+      }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(writes).toEqual([]);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      dryRun: true,
+      applied: false,
+      created: ["planning/work-items/wi-001-work.md"],
+      updated: [],
+      unchanged: [],
+      humanAuthoredWarnings: []
+    });
+  });
+
+  it("reports updated projection sections that apply may overwrite", async () => {
+    const workItem = graph.nodes.find((node) => node.kind === "work_item");
+    if (!workItem || workItem.kind !== "work_item") {
+      throw new Error("Fixture Work Item missing.");
+    }
+    const projection = renderWorkItemProjection(graph, workItem);
+
+    const result = await runPlannerCli(["export", "--dry-run", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      projectionReader: {
+        readMany: async () => [],
+        readExistingMany: async () => [
+          {
+            requestedPath: projection.path,
+            path: projection.path,
+            content: projection.content.replace("Use the Planning Graph as the source of truth.", "Manual note.")
+          }
+        ]
+      }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      updated: ["planning/work-items/wi-001-work.md"],
+      humanAuthoredWarnings: [
+        {
+          path: "planning/work-items/wi-001-work.md",
+          sections: ["Agent Notes"]
+        }
+      ]
+    });
+  });
+
+  it("dry-runs and applies export through filesystem adapters", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-export-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+
+      const dryRun = await runPlannerCli(["export", "--dry-run", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: new FileProjectionWriter(),
+        projectionReader: new FileProjectionReader()
+      });
+
+      expect(dryRun.exitCode).toBe(0);
+      expect(JSON.parse(dryRun.stdout)).toMatchObject({
+        dryRun: true,
+        applied: false,
+        created: ["planning/work-items/wi-001-work.md"]
+      });
+      await expect(readdir("planning/work-items")).rejects.toMatchObject({ code: "ENOENT" });
+
+      const apply = await runPlannerCli(["export", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: new FileProjectionWriter(),
+        projectionReader: new FileProjectionReader()
+      });
+
+      expect(apply.exitCode).toBe(0);
+      expect(JSON.parse(apply.stdout)).toMatchObject({
+        dryRun: false,
+        applied: true,
+        exported: ["planning/work-items/wi-001-work.md"]
+      });
+      expect(await readFile("planning/work-items/wi-001-work.md", "utf8")).toContain("# Work");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
   });
 
   it("supports reconcile JSON output without applying graph mutations", async () => {
