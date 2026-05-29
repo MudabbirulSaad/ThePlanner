@@ -137,7 +137,7 @@ export interface AgentRunArtifactReader {
 }
 
 export type SupportedAgent = "codex" | "claude" | "gemini";
-export type RunnableAgent = "codex";
+export type RunnableAgent = SupportedAgent;
 
 export interface AgentRunnerInput {
   readonly agent: RunnableAgent;
@@ -1145,7 +1145,7 @@ function parseAgentExecutionRunMetadata(content: string): AgentExecutionRunMetad
   const value = parseJsonObject(content, "run metadata");
   const validation = readValidationSummary(value.validation);
   const agent = value.agent;
-  if (agent !== "codex") {
+  if (agent !== "codex" && agent !== "claude" && agent !== "gemini") {
     throw new Error("Run metadata is not a runnable agent metadata artifact.");
   }
 
@@ -1420,11 +1420,11 @@ function parseSupportedAgent(agent: string): SupportedAgent {
 }
 
 function parseRunnableAgent(agent: string): RunnableAgent {
-  if (agent === "codex") {
+  if (agent === "codex" || agent === "claude" || agent === "gemini") {
     return agent;
   }
 
-  throw new Error(`Unsupported run agent: ${agent}. Supported run agents: codex.`);
+  throw new Error(`Unsupported run agent: ${agent}. Supported run agents: codex, claude, gemini.`);
 }
 
 function agentDisplayName(agent: SupportedAgent): string {

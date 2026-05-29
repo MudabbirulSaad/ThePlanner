@@ -345,7 +345,7 @@ export async function runPlannerCli(
 
     const agent = readOption(rest, "--agent");
     if (!agent) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires --agent <codex>\n" };
+      return { exitCode: 1, stdout: "", stderr: "planner run requires --agent <codex|claude|gemini>\n" };
     }
 
     try {

@@ -57,6 +57,8 @@ node dist/src/adapters/cli/index.js reconcile --apply --json
 node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --dry-run --json
 node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --apply --json
 node dist/src/adapters/cli/index.js run wi-001 --agent codex --json
+node dist/src/adapters/cli/index.js run wi-001 --agent claude --json
+node dist/src/adapters/cli/index.js run wi-001 --agent gemini --json
 node dist/src/adapters/cli/index.js run review run-YYYYMMDD-HHMMSS-wi-001 --json
 node dist/src/adapters/cli/index.js run accept run-YYYYMMDD-HHMMSS-wi-001 --json
 node dist/src/adapters/cli/index.js run reject run-YYYYMMDD-HHMMSS-wi-001 --json
@@ -77,11 +79,25 @@ Command behavior:
 - `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
 - `prepare <work-item-id> --agent <codex|claude|gemini> --dry-run --json`: verifies the Work Item exists and is agent-eligible, then prints a deterministic manual paste context bundle with `AGENTS.md`, the rendered Work Item projection, dependency view, related document projections, validation commands, and scope reminders. Dry run does not execute agents, write run artifacts, mutate source code, or mark Work Items done.
 - `prepare <work-item-id> --agent <codex|claude|gemini> --apply --json`: writes a local handoff record under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/` with `metadata.json`, `prompt.md`, and `context.md`. JSON reports the run id, metadata, and created paths. These run artifacts are not ignored by default because they are local, git-reviewable evidence of what was handed to an agent. Use `prompt.md` as the manual paste prompt and `context.md` to inspect or reproduce the exact context bundle. Apply mode does not execute an agent, mutate graph state, or mark Work Items done.
-- `run <work-item-id> --agent codex --json`: verifies the Work Item is agent-eligible and AFK-ready, creates the same context bundle, invokes Codex, then runs the Work Item validation commands. It writes `metadata.json`, `prompt.md`, `context.md`, `runner-stdout.log`, `runner-stderr.log`, `validation-stdout.log`, `validation-stderr.log`, and `result.json` under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/`. The Codex command defaults to `codex`; configure it with `PLANNER_CODEX_COMMAND` or `--runner-command "<command>"`. A missing Codex binary returns failed JSON with `runner.error.code: runner_not_found`; validation failures return failed JSON with `validation.status: "fail"`. Running a coding agent may modify your working tree; review the saved run artifacts and working tree before accepting any changes.
+- `run <work-item-id> --agent <codex|claude|gemini> --json`: verifies the Work Item is agent-eligible and AFK-ready, creates the same context bundle, invokes the selected local coding-agent CLI, then runs the Work Item validation commands. It writes `metadata.json`, `prompt.md`, `context.md`, `runner-stdout.log`, `runner-stderr.log`, `validation-stdout.log`, `validation-stderr.log`, and `result.json` under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/`. Missing binaries return failed JSON with `runner.error.code: runner_not_found`; Codex auth preflight failures return `runner.error.code: runner_auth_failed`; validation failures return failed JSON with `validation.status: "fail"`. Running a coding agent may modify your working tree; review the saved run artifacts and working tree before accepting any changes.
 - `run review <run-id> --json`: reads saved `metadata.json` and `result.json` from `planning/runs/<run-id>/` and summarizes the Work Item, agent exit code, validation results, changed files when present in the run result, and artifact paths.
 - `run accept <run-id> --json` / `run reject <run-id> --json`: appends an audit event to `planning/change-log.ndjson` for the human decision. These commands do not change Work Item state, commit files, or delete run artifacts.
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
+
+## Agent Runner Commands
+
+`planner run` is a local process runner only. It sends the generated prompt to the selected command on stdin and sets `PLANNER_AGENT`, `PLANNER_RUN_ID`, `PLANNER_WORK_ITEM_ID`, and `PLANNER_RUN_DIRECTORY` in the child process environment.
+
+Default commands:
+
+- Codex: `codex exec -`, configured with `PLANNER_CODEX_COMMAND`.
+- Claude Code: `claude`, configured with `PLANNER_CLAUDE_COMMAND`.
+- Gemini CLI: `gemini`, configured with `PLANNER_GEMINI_COMMAND`.
+
+Codex runs a local auth preflight with `codex login status` before the agent command when the configured binary is named `codex`. Run `codex login` yourself if the preflight reports `runner_auth_failed`. The default Codex command uses `exec -` so the generated prompt is read from stdin non-interactively.
+
+`--runner-command "<command>"` overrides the configured command for the selected run. Use this for wrappers or local test scripts, for example `--runner-command "node scripts/fake-agent.js"`. Claude Code and Gemini CLI support is intentionally a runner stub: planner selects and invokes the local command, captures stdout/stderr, records artifacts, and reports missing binaries clearly, but it does not manage provider auth, cloud APIs, multi-agent coordination, or agent-specific feature flags. Claude/Gemini auth preflights are deferred until their local status commands are pinned.
 
 ## Example Workflow
 
@@ -125,6 +141,6 @@ The repository follows Hexagonal Architecture:
 - Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. Broader schema evolution and migrations are deferred.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is deferred.
-- LLM adapters and live provider calls are not implemented.
-- `planner run` executes Codex only when explicitly invoked for one Work Item and then runs the Work Item validation commands. Claude Code and Gemini CLI runners, multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
+- LLM cloud API adapters and live provider calls are not implemented.
+- `planner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
 - Validation commands are executed directly as argv-style process commands. Shell operators such as `&&` require an explicit shell command wrapper.

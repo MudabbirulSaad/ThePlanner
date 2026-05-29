@@ -838,6 +838,46 @@ describe("planner CLI use case wiring", () => {
     });
   });
 
+  it.each(["claude", "gemini"] as const)("runs a ready Work Item through a fake %s runner from the CLI", async (agent) => {
+    const runner: AgentRunner = {
+      run: async (input) => ({
+        command: [input.agent],
+        exitCode: 0,
+        stdout: `ran ${input.agent} ${input.workItemId}\n`,
+        stderr: ""
+      })
+    };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 0,
+        stdout: "validation ok\n",
+        stderr: ""
+      })
+    };
+
+    const result = await runPlannerCli(["run", "wi-001", "--agent", agent, "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "completed",
+      agent,
+      workItemId: "wi-001",
+      runner: {
+        command: [agent],
+        exitCode: 0
+      }
+    });
+  });
+
   it("returns useful JSON when the Codex runner is missing", async () => {
     const runner: AgentRunner = {
       run: async () => ({
