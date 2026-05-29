@@ -19,7 +19,7 @@ export interface GraphRepository {
 }
 
 export interface ProjectionWriter {
-  readonly writeAll: (projections: readonly RenderedProjection[]) => Promise<void>;
+  readonly writeAll: (projections: readonly RenderedProjection[]) => Promise<readonly string[] | void>;
 }
 
 export interface ProjectionReader {
@@ -75,8 +75,8 @@ export async function exportProjectionsUseCase(
 ): Promise<{ readonly exported: readonly string[] }> {
   const graph = await graphRepository.load();
   const projections = renderAllProjections(graph);
-  await projectionWriter.writeAll(projections);
-  return { exported: projections.map((projection) => projection.path) };
+  const exported = await projectionWriter.writeAll(projections);
+  return { exported: exported ?? projections.map((projection) => projection.path) };
 }
 
 export async function reconcileGraphUseCase(args: {

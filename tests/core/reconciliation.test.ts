@@ -62,6 +62,50 @@ describe("graph reconciliation", () => {
     expect(result.conflicts).toEqual([]);
   });
 
+  it("does not treat command-only validation Markdown as an expected result edit", () => {
+    const graphWithDescriptiveValidation = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [
+          { id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Work item",
+            execution_state: "done",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible", "afk_ready"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: [
+              { type: "command", command: "npm test", expected_result: "Domain tests pass with fixture data" }
+            ]
+          }
+        ],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
+    });
+    const workItemWithDescriptiveValidation = graphWithDescriptiveValidation.nodes.find(isWorkItemOne);
+    if (!workItemWithDescriptiveValidation) {
+      throw new Error("Fixture Work Item missing.");
+    }
+
+    const result = reconcileGraphProjections(graphWithDescriptiveValidation, [
+      renderWorkItemProjection(graphWithDescriptiveValidation, workItemWithDescriptiveValidation)
+    ]);
+
+    expect(result.proposedPatches).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+  });
+
   it("proposes a graph patch for a changed Work Item title", () => {
     const result = reconcileGraphProjections(graph, [
       { ...projection, content: projection.content.replace("title: Work item", "title: Renamed work item") }

@@ -6,8 +6,10 @@ AI Engineering Planner is a CLI-first TypeScript/Node tool for keeping repositor
 
 The MVP is local and repository-first:
 
-- `planning/graph.json` is the canonical source of truth.
-- Markdown files under `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` are projections.
+- `planning/graph.json` is the clean starter workspace used by default CLI commands.
+- Demo planning state is preserved under `examples/ai-engineering-planner-v1/`.
+- In any workspace, the local `planning/graph.json` is the canonical source of truth.
+- Markdown files under that workspace's `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` paths are projections.
 - Work Items carry deterministic execution state, readiness labels, acceptance criteria, and validation methods.
 - Validation checks graph semantics and derives readiness summaries.
 - Reconciliation inspects Work Item Markdown and proposes safe graph patches without mutating unless `--apply` is passed.
@@ -69,6 +71,15 @@ node dist/src/adapters/cli/index.js status --json
 node dist/src/adapters/cli/index.js validate --json
 node dist/src/adapters/cli/index.js reconcile --json
 npm run check
+```
+
+The repository root now starts with a minimal starter `planning/graph.json`. The V1 dogfood graph and generated sample projections live in `examples/ai-engineering-planner-v1/`; run the built CLI from that directory to inspect the demo state:
+
+```sh
+cd examples/ai-engineering-planner-v1
+node ../../dist/src/adapters/cli/index.js status --json
+node ../../dist/src/adapters/cli/index.js validate --json
+node ../../dist/src/adapters/cli/index.js reconcile --json
 ```
 
 If `reconcile --json` returns `proposedPatches`, review them before using `--apply`. `unsupportedProjectionEdits` are richer Markdown fields or sections that V1 preserves as manual intent but does not ingest as canonical graph truth. They are not failures by themselves.

@@ -26,12 +26,16 @@ export class FilePlanningGraphRepository implements GraphRepository {
 }
 
 export class FileProjectionWriter implements ProjectionWriter {
-  public async writeAll(projections: readonly RenderedProjection[]): Promise<void> {
+  public async writeAll(projections: readonly RenderedProjection[]): Promise<readonly string[]> {
+    const writtenPaths: string[] = [];
     for (const projection of projections) {
-      const path = resolve(await resolveProjectionPath(projection.path));
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(path, projection.content, "utf8");
+      const resolvedPath = await resolveProjectionPath(projection.path);
+      const absolutePath = resolve(resolvedPath);
+      await mkdir(dirname(absolutePath), { recursive: true });
+      await writeFile(absolutePath, projection.content, "utf8");
+      writtenPaths.push(resolvedPath);
     }
+    return writtenPaths;
   }
 }
 

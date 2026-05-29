@@ -44,6 +44,18 @@ describe("planner CLI use case wiring", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ graphVersion: 1, status: "pass" });
   });
 
+  it("reports projection paths returned by the writer during export", async () => {
+    const result = await runPlannerCli(["export", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => ["planning/work-items/wi-001-existing-name.md"] }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      exported: ["planning/work-items/wi-001-existing-name.md"]
+    });
+  });
+
   it("supports reconcile JSON output without applying graph mutations", async () => {
     let saved: PlanningGraph | undefined;
     const workItem = graph.nodes.find((node) => node.kind === "work_item");

@@ -4,7 +4,7 @@ This demo shows the V1 MVP loop for the AI Engineering Planner: canonical Planni
 
 ## Commands
 
-Run from the repository root.
+Build from the repository root. Run demo CLI commands from `examples/ai-engineering-planner-v1/` so the default `planning/graph.json` target is the preserved V1 dogfood graph.
 
 ```sh
 npm install
@@ -13,10 +13,11 @@ npm test
 npm run lint
 npm run check
 npm run validate:graph
-node dist/src/adapters/cli/index.js status --json
-node dist/src/adapters/cli/index.js validate --json
-node dist/src/adapters/cli/index.js export --json
-node dist/src/adapters/cli/index.js reconcile --json
+cd examples/ai-engineering-planner-v1
+node ../../dist/src/adapters/cli/index.js status --json
+node ../../dist/src/adapters/cli/index.js validate --json
+node ../../dist/src/adapters/cli/index.js export --json
+node ../../dist/src/adapters/cli/index.js reconcile --json
 ```
 
 ## Expected Output
@@ -25,7 +26,7 @@ node dist/src/adapters/cli/index.js reconcile --json
 - `npm test`: Vitest reports all test files and tests passing.
 - `npm run lint`: ESLint completes without findings.
 - `npm run check`: build, tests, and lint all pass.
-- `npm run validate:graph`: reports `graph_version: 6`, `status: pass`, `errors: 0`, and `warnings: 0`.
+- `npm run validate:graph`: reports the clean starter graph with `graph_version: 1`, `status: pass`, `errors: 0`, and `warnings: 0`.
 - `status --json`: reports graph version 6, status `pass`, all eight Work Items AFK-ready and agent-eligible, and no blocked or HITL-gated Work Items.
 - `validate --json`: reports semantic status, errors, warnings, readiness summary, and readiness snapshots.
 - `export --json`: reports deterministic projection paths written from the graph.
@@ -33,9 +34,9 @@ node dist/src/adapters/cli/index.js reconcile --json
 
 ## MVP Flow
 
-`planning/graph.json` is the source of truth. It contains requirements, decisions, Work Items, execution slices, dependency edges, readiness snapshots, and document projection metadata.
+The demo `examples/ai-engineering-planner-v1/planning/graph.json` is the source of truth for the preserved V1 sample. It contains requirements, decisions, Work Items, execution slices, dependency edges, readiness snapshots, and document projection metadata.
 
-Markdown-first repository export renders graph state into local, diffable artifacts under `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/`. These files are projections, not independent canonical state.
+Markdown-first repository export renders graph state into local, diffable artifacts under the demo workspace's `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` paths. These files are projections, not independent canonical state.
 
 Validation checks graph semantics and derives readiness. In the current MVP graph, all eight Work Items are done, AFK-ready, and agent-eligible.
 

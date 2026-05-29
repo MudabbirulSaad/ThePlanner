@@ -308,6 +308,17 @@ function compareValidationMethods(
 ) {
   const frontmatterValidation = validationMethods(parsed.frontmatter.validation);
   const bodyCommands = markdownList(parsed.sections.Validation).map(stripInlineCode);
+  if (
+    frontmatterValidation.length === 0 &&
+    bodyCommands.length > 0 &&
+    sameList(
+      bodyCommands,
+      workItem.validationMethods.map((method) => method.command ?? method.expectedResult)
+    )
+  ) {
+    return;
+  }
+
   const next = frontmatterValidation.length > 0 ? frontmatterValidation : commandsToValidationMethods(bodyCommands);
   if (next.length === 0 || sameValidationMethods(next, workItem.validationMethods)) {
     return;

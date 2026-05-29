@@ -7,7 +7,9 @@ import { renderAllProjections } from "../../src/core/index.js";
 
 describe("projection rendering", () => {
   it("renders deterministic Work Item Markdown from the Planning Graph", () => {
-    const graph = parsePlanningGraphJson(JSON.parse(readFileSync("planning/graph.json", "utf8")));
+    const graph = parsePlanningGraphJson(
+      JSON.parse(readFileSync("examples/ai-engineering-planner-v1/planning/graph.json", "utf8"))
+    );
     const rendered = renderAllProjections(graph).find((projection) =>
       projection.path.endsWith("wi-003-implement-graph-validation-and-readiness-derivation.md")
     );

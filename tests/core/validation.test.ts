@@ -6,14 +6,31 @@ import { parsePlanningGraphJson } from "../../src/application/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 
 function loadGraph() {
-  return parsePlanningGraphJson(JSON.parse(readFileSync("planning/graph.json", "utf8")));
+  return parsePlanningGraphJson(
+    JSON.parse(readFileSync("examples/ai-engineering-planner-v1/planning/graph.json", "utf8"))
+  );
 }
 
 function cloneGraph() {
-  return JSON.parse(readFileSync("planning/graph.json", "utf8"));
+  return JSON.parse(readFileSync("examples/ai-engineering-planner-v1/planning/graph.json", "utf8"));
 }
 
 describe("graph validation and readiness", () => {
+  it("validates the clean starter workspace graph", () => {
+    const graph = parsePlanningGraphJson(JSON.parse(readFileSync("planning/graph.json", "utf8")));
+    const result = validatePlanningGraph(graph);
+
+    expect(result.status).toBe("pass");
+    expect(result.graphVersion).toBe(1);
+    expect(result.readinessSummary).toEqual({
+      afkReady: [],
+      agentEligible: [],
+      blocked: [],
+      hitlGated: [],
+      humanOnly: []
+    });
+  });
+
   it("validates the canonical planning graph and derives readiness", () => {
     const result = validatePlanningGraph(loadGraph());
 
