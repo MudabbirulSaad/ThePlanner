@@ -8,6 +8,7 @@ import {
   exportProjectionsUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
+  planFromBriefApplyUseCase,
   planFromBriefDryRunUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
@@ -153,15 +154,24 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner plan requires --from <file>\n" };
     }
 
-    if (!rest.includes("--dry-run")) {
-      return { exitCode: 1, stdout: "", stderr: "planner plan currently supports --dry-run only\n" };
+    const dryRun = rest.includes("--dry-run");
+    const apply = rest.includes("--apply");
+    if (dryRun === apply) {
+      return { exitCode: 1, stdout: "", stderr: "planner plan requires exactly one of --dry-run or --apply\n" };
     }
 
     try {
-      const result = await planFromBriefDryRunUseCase({
-        refinedBriefReader: services.refinedBriefReader,
-        fromPath: from
-      });
+      const result = apply
+        ? await planFromBriefApplyUseCase({
+            graphRepository: services.graphRepository,
+            refinedBriefReader: services.refinedBriefReader,
+            changeLogWriter: requireChangeLogWriter(services.changeLogWriter),
+            fromPath: from
+          })
+        : await planFromBriefDryRunUseCase({
+            refinedBriefReader: services.refinedBriefReader,
+            fromPath: from
+          });
       return render(result.validation.status === "error" ? 1 : 0, result, json);
     } catch (error) {
       return {
@@ -199,6 +209,14 @@ export async function runPlannerCli(
     stdout: command ? "" : "planner CLI scaffold\n",
     stderr: command ? `Unknown command: ${command}\n` : ""
   };
+}
+
+function requireChangeLogWriter(changeLogWriter: ChangeLogWriter | undefined): ChangeLogWriter {
+  if (!changeLogWriter) {
+    throw new Error("planner plan --apply requires a planning change log writer");
+  }
+
+  return changeLogWriter;
 }
 
 function render(exitCode: number, value: unknown, json: boolean): PlannerCliResult {

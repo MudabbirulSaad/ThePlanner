@@ -50,6 +50,7 @@ node dist/src/adapters/cli/index.js export --json
 node dist/src/adapters/cli/index.js intake questions --from planning/intake/idea.md --json
 node dist/src/adapters/cli/index.js intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
 node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --dry-run --json
+node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --apply --json
 node dist/src/adapters/cli/index.js reconcile --json
 node dist/src/adapters/cli/index.js reconcile --apply --json
 ```
@@ -62,7 +63,8 @@ Command behavior:
 - `export`: writes deterministic projections from the canonical graph.
 - `intake questions --from <file>`: reads a rough intake idea and prints deterministic grilling questions grouped by target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions. Add `--json` for structured output. Paste the human-readable output into Codex, Claude, or Gemini to run a manual grilling conversation before creating a refined brief.
 - `intake refine --from <file> --out <file>`: creates a user-owned refined brief Markdown scaffold with TODO sections for product summary, users, goals, MVP scope, non-goals, constraints, success criteria, and open questions. Existing files are reported as skipped and left untouched unless `--force` is passed. Fill this brief manually or with an agent before planning from it.
-- `plan --from <file> --dry-run --json`: reads a refined brief and prints a deterministic valid graph proposal without writing `planning/graph.json` or exporting projections. The proposal is conservative and includes scaffold notes where fields are inferred; review it before any future apply flow.
+- `plan --from <file> --dry-run --json`: reads a refined brief and prints a deterministic valid graph proposal without writing `planning/graph.json` or exporting projections. The proposal is conservative and includes scaffold notes where fields are inferred.
+- `plan --from <file> --apply --json`: validates the refined brief graph proposal, writes `planning/graph.json`, and appends `planning/change-log.ndjson`. Existing non-empty graphs are protected until a future explicit update or force path exists.
 - `reconcile`: reads Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
 - `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
 
@@ -106,7 +108,7 @@ The repository follows Hexagonal Architecture:
 
 ## Known V1 Limitations
 
-- `planner plan` supports dry-run JSON proposals only; applying a proposed graph to `planning/graph.json` is deferred.
+- `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
 - JSON Schema validation is represented by `planning/graph.schema.json`, but the current CLI semantic validator reports `schemaStatus: "not_run"`.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is deferred.

@@ -21,6 +21,7 @@ import { serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
   readonly load: () => Promise<PlanningGraph>;
+  readonly loadIfExists?: () => Promise<PlanningGraph | undefined>;
   readonly save?: (graph: PlanningGraph) => Promise<void>;
 }
 
@@ -235,6 +236,72 @@ export async function planFromBriefDryRunUseCase(args: {
   };
 }
 
+export async function planFromBriefApplyUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly refinedBriefReader: RefinedBriefReader;
+  readonly changeLogWriter: ChangeLogWriter;
+  readonly fromPath: string;
+  readonly actor?: string;
+  readonly timestamp?: string;
+}): Promise<{
+  readonly status: "applied";
+  readonly dryRun: false;
+  readonly applied: true;
+  readonly sourcePath: string;
+  readonly graph: unknown;
+  readonly validation: GraphValidationResult;
+  readonly scaffoldedFields: readonly string[];
+  readonly event: PlanningChangeLogEvent;
+  readonly message: string;
+}> {
+  if (!args.graphRepository.save) {
+    throw new Error("Applying a plan requires a writable graph repository.");
+  }
+
+  const existingGraph = args.graphRepository.loadIfExists ? await args.graphRepository.loadIfExists() : await args.graphRepository.load();
+  const existingGraphIsNonEmpty = Boolean(existingGraph && !isEmptyPlanningGraph(existingGraph));
+  if (existingGraphIsNonEmpty) {
+    throw new Error("Refusing to overwrite existing non-empty planning/graph.json without an explicit force/update path.");
+  }
+
+  const content = await args.refinedBriefReader.read(args.fromPath);
+  const proposal = proposePlanningGraphFromBrief({
+    sourcePath: args.fromPath,
+    content
+  });
+  const validation = validatePlanningGraph(proposal.graph);
+  if (validation.status === "error") {
+    throw new Error("Proposed graph failed validation and was not applied.");
+  }
+
+  const event = createChangeLogEvent({
+    graphVersionBefore: 0,
+    graphVersionAfter: proposal.graph.graphVersion,
+    affectedNodeIds: proposal.graph.nodes.map((node) => node.id),
+    actor: args.actor ?? "planner",
+    timestamp: args.timestamp ?? new Date().toISOString(),
+    operationType: "graph_creation_from_brief",
+    approvalStatus: "applied",
+    summary: `Created planning graph from refined brief ${args.fromPath}.`,
+    provenanceReference: `planner plan --from ${args.fromPath} --apply`
+  });
+
+  await args.changeLogWriter.append(event);
+  await args.graphRepository.save(proposal.graph);
+
+  return {
+    status: "applied",
+    dryRun: false,
+    applied: true,
+    sourcePath: args.fromPath,
+    graph: serializePlanningGraphJson(proposal.graph),
+    validation,
+    scaffoldedFields: proposal.scaffoldedFields,
+    event,
+    message: "Applied graph proposal to planning/graph.json and recorded planning/change-log.ndjson."
+  };
+}
+
 export async function reconcileGraphUseCase(args: {
   readonly graphRepository: GraphRepository;
   readonly projectionReader: ProjectionReader;
@@ -328,6 +395,10 @@ export function createChangeLogEvent(args: {
     summary: args.summary,
     provenance_reference: args.provenanceReference
   };
+}
+
+function isEmptyPlanningGraph(graph: PlanningGraph): boolean {
+  return graph.nodes.length === 0 && graph.edges.length === 0;
 }
 
 const starterDirectories = [

@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
 import {
+  FileChangeLogWriter,
   FileIntakeIdeaReader,
+  FilePlanningGraphRepository,
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
   FileWorkspaceInitializer
@@ -262,6 +264,99 @@ describe("planner CLI use case wiring", () => {
       expect(output.graph.nodes.work_items).toHaveLength(3);
       expect(output.graph.nodes.document_projections).toHaveLength(3);
       expect(await listWorkspaceFiles(".")).toEqual(before);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("applies a refined brief plan, writes graph.json, and records a change-log event", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-plan-apply-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("planning/intake/refined-brief.md", await readFile(join(originalCwd, "tests/fixtures/intake/refined-brief.md"), "utf8"), "utf8");
+
+      const result = await runPlannerCli(
+        ["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: { writeAll: async () => undefined },
+          refinedBriefReader: new FileRefinedBriefReader(),
+          changeLogWriter: new FileChangeLogWriter()
+        }
+      );
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toMatchObject({
+        status: "applied",
+        dryRun: false,
+        applied: true,
+        sourcePath: "planning/intake/refined-brief.md",
+        graph: {
+          schema_version: "0.1.0",
+          graph_version: 1,
+          source: "planning/intake/refined-brief.md"
+        },
+        event: {
+          graph_version_before: 0,
+          graph_version_after: 1,
+          operation_type: "graph_creation_from_brief",
+          approval_status: "applied"
+        }
+      });
+
+      const savedGraph = parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8")));
+      expect(validatePlanningGraph(savedGraph).status).toBe("pass");
+
+      const events = (await readFile("planning/change-log.ndjson", "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        graph_version_before: 0,
+        graph_version_after: 1,
+        operation_type: "graph_creation_from_brief"
+      });
+
+      const validate = await runPlannerCli(["validate", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined }
+      });
+      expect(validate.exitCode).toBe(0);
+      expect(JSON.parse(validate.stdout)).toMatchObject({ status: "pass", graphVersion: 1 });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses to apply a refined brief over an existing non-empty graph", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-plan-protect-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("planning/intake/refined-brief.md", await readFile(join(originalCwd, "tests/fixtures/intake/refined-brief.md"), "utf8"), "utf8");
+      await new FilePlanningGraphRepository().save(graph);
+      await writeFile("planning/change-log.ndjson", "", "utf8");
+
+      const result = await runPlannerCli(
+        ["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: { writeAll: async () => undefined },
+          refinedBriefReader: new FileRefinedBriefReader(),
+          changeLogWriter: new FileChangeLogWriter()
+        }
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("Refusing to overwrite existing non-empty planning/graph.json without an explicit force/update path.\n");
+      expect(parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8"))).nodes).toHaveLength(graph.nodes.length);
+      expect(await readFile("planning/change-log.ndjson", "utf8")).toBe("");
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });

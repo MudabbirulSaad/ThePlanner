@@ -26,8 +26,21 @@ export class FilePlanningGraphRepository implements GraphRepository {
     return parsePlanningGraphJson(JSON.parse(source));
   }
 
+  public async loadIfExists(): Promise<PlanningGraph | undefined> {
+    try {
+      return await this.load();
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
   public async save(graph: PlanningGraph): Promise<void> {
-    await writeFile(resolve(this.graphPath), `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+    const resolvedPath = resolve(this.graphPath);
+    await mkdir(dirname(resolvedPath), { recursive: true });
+    await writeFile(resolvedPath, `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
   }
 }
 
