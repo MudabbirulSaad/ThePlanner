@@ -51,6 +51,6 @@ The planning change log at `planning/change-log.ndjson` records graph-changing e
 - No live LLM calls.
 - No external tracker sync.
 - No autonomous coding-agent execution.
-- `planner plan` is scaffolded and does not yet convert a new Intake Brief into a graph.
+- `planner plan` only supports dry-run JSON proposals from refined briefs; applying proposals is deferred.
 - CLI validation reports semantic validation; JSON Schema runtime validation is represented as `schemaStatus: "not_run"`.
 - Reconciliation supports safe V1 fields and reports richer Markdown sections or unsupported relationships as `unsupportedProjectionEdits`.

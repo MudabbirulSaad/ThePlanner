@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
-import { FileIntakeIdeaReader, FileRefinedBriefWriter, FileWorkspaceInitializer } from "../../src/adapters/index.js";
+import {
+  FileIntakeIdeaReader,
+  FileRefinedBriefReader,
+  FileRefinedBriefWriter,
+  FileWorkspaceInitializer
+} from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
@@ -226,6 +231,71 @@ describe("planner CLI use case wiring", () => {
     expect(result.stderr).toBe("Intake idea file not found: tests/fixtures/intake/missing.md\n");
   });
 
+  it("prints a valid plan proposal in dry-run JSON without writing files", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-plan-dry-run-"));
+
+    try {
+      process.chdir(workspace);
+      await writeFile("refined-brief.md", await readFile(join(originalCwd, "tests/fixtures/intake/refined-brief.md"), "utf8"), "utf8");
+      const before = await listWorkspaceFiles(".");
+
+      const result = await runPlannerCli(["plan", "--from", "refined-brief.md", "--dry-run", "--json"], {
+        graphRepository: { load: async () => graph, save: async () => { throw new Error("dry-run must not save"); } },
+        projectionWriter: { writeAll: async () => { throw new Error("dry-run must not export"); } },
+        refinedBriefReader: new FileRefinedBriefReader()
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toMatchObject({
+        status: "proposed",
+        dryRun: true,
+        sourcePath: "refined-brief.md",
+        graph: {
+          schema_version: "0.1.0",
+          graph_version: 1,
+          source: "refined-brief.md"
+        }
+      });
+      expect(validatePlanningGraph(parsePlanningGraphJson(output.graph)).status).toBe("pass");
+      expect(output.graph.nodes.work_items).toHaveLength(3);
+      expect(output.graph.nodes.document_projections).toHaveLength(3);
+      expect(await listWorkspaceFiles(".")).toEqual(before);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("returns a useful error for missing and empty refined briefs", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-plan-errors-"));
+
+    try {
+      process.chdir(workspace);
+      const missing = await runPlannerCli(["plan", "--from", "missing.md", "--dry-run", "--json"], {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        refinedBriefReader: new FileRefinedBriefReader()
+      });
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr).toBe("Refined brief file not found: missing.md\n");
+
+      await writeFile("empty.md", "\n", "utf8");
+      const empty = await runPlannerCli(["plan", "--from", "empty.md", "--dry-run", "--json"], {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        refinedBriefReader: new FileRefinedBriefReader()
+      });
+      expect(empty.exitCode).toBe(1);
+      expect(empty.stderr).toBe("Refined brief is empty: empty.md\n");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("reports projection paths returned by the writer during export", async () => {
     const result = await runPlannerCli(["export", "--json"], {
       graphRepository: { load: async () => graph },
@@ -295,3 +365,8 @@ describe("planner CLI use case wiring", () => {
     });
   });
 });
+
+async function listWorkspaceFiles(path: string): Promise<readonly string[]> {
+  const entries = await readdir(path, { recursive: true, withFileTypes: true });
+  return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name)).sort();
+}

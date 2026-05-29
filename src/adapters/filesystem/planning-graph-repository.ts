@@ -9,6 +9,7 @@ import type {
   PlanningChangeLogEvent,
   ProjectionReader,
   ProjectionWriter,
+  RefinedBriefReader,
   RefinedBriefWriter,
   RefinedBriefWriteStatus,
   WorkspaceInitializer,
@@ -76,6 +77,19 @@ export class FileIntakeIdeaReader implements IntakeIdeaReader {
     } catch (error) {
       if (isNotFound(error)) {
         throw new Error(`Intake idea file not found: ${path}`);
+      }
+      throw error;
+    }
+  }
+}
+
+export class FileRefinedBriefReader implements RefinedBriefReader {
+  public async read(path: string): Promise<string> {
+    try {
+      return await readFile(resolve(path), "utf8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new Error(`Refined brief file not found: ${path}`);
       }
       throw error;
     }

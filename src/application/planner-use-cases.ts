@@ -1,6 +1,7 @@
 import {
   applyGraphPatches,
   generateIntakeQuestions,
+  proposePlanningGraphFromBrief,
   renderRefinedBriefScaffold,
   reconcileGraphProjections,
   renderAllProjections,
@@ -16,6 +17,7 @@ import type {
   RenderedProjection
 } from "../core/index.js";
 import { intakeBriefTemplate } from "../templates/intake-brief-template.js";
+import { serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
   readonly load: () => Promise<PlanningGraph>;
@@ -62,6 +64,10 @@ export interface WorkspaceInitializer {
 }
 
 export interface IntakeIdeaReader {
+  readonly read: (path: string) => Promise<string>;
+}
+
+export interface RefinedBriefReader {
   readonly read: (path: string) => Promise<string>;
 }
 
@@ -196,6 +202,36 @@ export async function refineIntakeBriefUseCase(args: {
       status === "skipped"
         ? "Refined brief already exists and was left untouched. Pass --force to replace it."
         : "Scaffolded a refined brief with TODO markers. Fill it before graph planning."
+  };
+}
+
+export async function planFromBriefDryRunUseCase(args: {
+  readonly refinedBriefReader: RefinedBriefReader;
+  readonly fromPath: string;
+}): Promise<{
+  readonly status: "proposed";
+  readonly dryRun: true;
+  readonly sourcePath: string;
+  readonly graph: unknown;
+  readonly validation: GraphValidationResult;
+  readonly scaffoldedFields: readonly string[];
+  readonly message: string;
+}> {
+  const content = await args.refinedBriefReader.read(args.fromPath);
+  const proposal = proposePlanningGraphFromBrief({
+    sourcePath: args.fromPath,
+    content
+  });
+  const validation = validatePlanningGraph(proposal.graph);
+
+  return {
+    status: "proposed",
+    dryRun: true,
+    sourcePath: args.fromPath,
+    graph: serializePlanningGraphJson(proposal.graph),
+    validation,
+    scaffoldedFields: proposal.scaffoldedFields,
+    message: "Dry run only. No planning files were written; review this graph before a future apply step."
   };
 }
 

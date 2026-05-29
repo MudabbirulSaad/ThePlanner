@@ -8,6 +8,7 @@ import {
   exportProjectionsUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
+  planFromBriefDryRunUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
   statusUseCase,
@@ -19,6 +20,7 @@ import type {
   IntakeIdeaReader,
   ProjectionReader,
   ProjectionWriter,
+  RefinedBriefReader,
   RefinedBriefWriter,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
@@ -30,6 +32,7 @@ export interface PlannerCliServices {
   readonly changeLogWriter?: ChangeLogWriter;
   readonly workspaceInitializer?: WorkspaceInitializer;
   readonly intakeIdeaReader?: IntakeIdeaReader;
+  readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
 }
 
@@ -141,11 +144,32 @@ export async function runPlannerCli(
   }
 
   if (command === "plan") {
-    if (!rest.includes("--brief")) {
-      return { exitCode: 1, stdout: "", stderr: "planner plan requires --brief <file>\n" };
+    if (!services.refinedBriefReader) {
+      return { exitCode: 1, stdout: "", stderr: "planner plan requires a refined brief reader\n" };
     }
 
-    return render(0, { status: "scaffolded", command: "plan" }, json);
+    const from = readOption(rest, "--from");
+    if (!from) {
+      return { exitCode: 1, stdout: "", stderr: "planner plan requires --from <file>\n" };
+    }
+
+    if (!rest.includes("--dry-run")) {
+      return { exitCode: 1, stdout: "", stderr: "planner plan currently supports --dry-run only\n" };
+    }
+
+    try {
+      const result = await planFromBriefDryRunUseCase({
+        refinedBriefReader: services.refinedBriefReader,
+        fromPath: from
+      });
+      return render(result.validation.status === "error" ? 1 : 0, result, json);
+    } catch (error) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: `${error instanceof Error ? error.message : String(error)}\n`
+      };
+    }
   }
 
   if (command === "reconcile") {
