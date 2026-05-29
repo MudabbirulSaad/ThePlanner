@@ -79,7 +79,7 @@ export async function runPlannerCli(
   services: PlannerCliServices
 ): Promise<PlannerCliResult> {
   const [command, ...rest] = args;
-  const json = rest.includes("--json");
+  const json = args.includes("--json");
 
   if (command === "validate") {
     const result = await validateGraphUseCase({
@@ -98,10 +98,10 @@ export async function runPlannerCli(
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun && apply) {
-      return { exitCode: 1, stdout: "", stderr: "planner export accepts only one of --dry-run or --apply\n" };
+      return fail("planner export accepts only one of --dry-run or --apply", json);
     }
     if (dryRun && !services.projectionReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner export --dry-run requires a projection reader\n" };
+      return fail("planner export --dry-run requires a projection reader", json);
     }
 
     try {
@@ -119,7 +119,7 @@ export async function runPlannerCli(
 
   if (command === "init") {
     if (!services.workspaceInitializer) {
-      return { exitCode: 1, stdout: "", stderr: "planner init requires a workspace initializer\n" };
+      return fail("planner init requires a workspace initializer", json);
     }
 
     const result = await initWorkspaceUseCase(services.workspaceInitializer);
@@ -129,43 +129,39 @@ export async function runPlannerCli(
   if (command === "intake") {
     if (rest[0] === "questions") {
       if (!services.intakeIdeaReader) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake questions requires an intake idea reader\n" };
+        return fail("planner intake questions requires an intake idea reader", json);
       }
 
       const from = readOption(rest, "--from");
       if (!from) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake questions requires --from <file>\n" };
+        return fail("planner intake questions requires --from <file>", json);
       }
 
       try {
         const result = await intakeQuestionsUseCase({ intakeIdeaReader: services.intakeIdeaReader, path: from });
         return render(0, result, json);
       } catch (error) {
-        return {
-          exitCode: 1,
-          stdout: "",
-          stderr: `${error instanceof Error ? error.message : String(error)}\n`
-        };
+        return renderError(error, json);
       }
     }
 
     if (rest[0] === "refine") {
       if (!services.intakeIdeaReader) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires an intake idea reader\n" };
+        return fail("planner intake refine requires an intake idea reader", json);
       }
 
       if (!services.refinedBriefWriter) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires a refined brief writer\n" };
+        return fail("planner intake refine requires a refined brief writer", json);
       }
 
       const from = readOption(rest, "--from");
       if (!from) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires --from <file>\n" };
+        return fail("planner intake refine requires --from <file>", json);
       }
 
       const out = readOption(rest, "--out");
       if (!out) {
-        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires --out <file>\n" };
+        return fail("planner intake refine requires --out <file>", json);
       }
 
       try {
@@ -178,31 +174,27 @@ export async function runPlannerCli(
         });
         return render(0, result, json);
       } catch (error) {
-        return {
-          exitCode: 1,
-          stdout: "",
-          stderr: `${error instanceof Error ? error.message : String(error)}\n`
-        };
+        return renderError(error, json);
       }
     }
 
-    return { exitCode: 1, stdout: "", stderr: "planner intake requires the questions or refine subcommand\n" };
+    return fail("planner intake requires the questions or refine subcommand", json);
   }
 
   if (command === "plan") {
     if (!services.refinedBriefReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner plan requires a refined brief reader\n" };
+      return fail("planner plan requires a refined brief reader", json);
     }
 
     const from = readOption(rest, "--from");
     if (!from) {
-      return { exitCode: 1, stdout: "", stderr: "planner plan requires --from <file>\n" };
+      return fail("planner plan requires --from <file>", json);
     }
 
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun === apply) {
-      return { exitCode: 1, stdout: "", stderr: "planner plan requires exactly one of --dry-run or --apply\n" };
+      return fail("planner plan requires exactly one of --dry-run or --apply", json);
     }
 
     try {
@@ -219,17 +211,13 @@ export async function runPlannerCli(
           });
       return render(result.validation.status === "error" ? 1 : 0, result, json);
     } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: "",
-        stderr: `${error instanceof Error ? error.message : String(error)}\n`
-      };
+      return renderError(error, json);
     }
   }
 
   if (command === "reconcile") {
     if (!services.projectionReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner reconcile requires a projection reader\n" };
+      return fail("planner reconcile requires a projection reader", json);
     }
 
     try {
@@ -241,35 +229,31 @@ export async function runPlannerCli(
       });
       return render(0, result, json);
     } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: "",
-        stderr: `${error instanceof Error ? error.message : String(error)}\n`
-      };
+      return renderError(error, json);
     }
   }
 
   if (command === "sync") {
     const tracker = rest[0];
     if (!tracker || tracker.startsWith("--")) {
-      return { exitCode: 1, stdout: "", stderr: "planner sync requires <tracker>\n" };
+      return fail("planner sync requires <tracker>", json);
     }
 
     if (!isSupportedTracker(tracker)) {
-      return { exitCode: 1, stdout: "", stderr: `Unsupported tracker: ${tracker}\n` };
+      return fail(`Unsupported tracker: ${tracker}`, json);
     }
 
     if (rest.includes("--apply")) {
-      return { exitCode: 1, stdout: "", stderr: "planner sync --apply is deferred; use --dry-run to preview tracker payloads\n" };
+      return fail("planner sync --apply is deferred; use --dry-run to preview tracker payloads", json);
     }
 
     if (!rest.includes("--dry-run")) {
-      return { exitCode: 1, stdout: "", stderr: "planner sync requires --dry-run; live sync is deferred\n" };
+      return fail("planner sync requires --dry-run; live sync is deferred", json);
     }
 
     const trackerAdapter = services.trackerSyncAdapters?.find((adapter) => adapter.tracker === tracker);
     if (!trackerAdapter) {
-      return { exitCode: 1, stdout: "", stderr: `planner sync ${tracker} requires a tracker sync adapter\n` };
+      return fail(`planner sync ${tracker} requires a tracker sync adapter`, json);
     }
 
     try {
@@ -285,27 +269,27 @@ export async function runPlannerCli(
 
   if (command === "prepare") {
     if (!services.contextFileReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare requires a context file reader\n" };
+      return fail("planner prepare requires a context file reader", json);
     }
 
     const workItemId = rest[0];
     if (!workItemId || workItemId.startsWith("--")) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare requires <work-item-id>\n" };
+      return fail("planner prepare requires <work-item-id>", json);
     }
 
     const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare requires --agent <codex|claude|gemini>\n" };
+      return fail("planner prepare requires --agent <codex|claude|gemini>", json);
     }
 
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun === apply) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare requires exactly one of --dry-run or --apply\n" };
+      return fail("planner prepare requires exactly one of --dry-run or --apply", json);
     }
 
     if (apply && !services.runArtifactWriter) {
-      return { exitCode: 1, stdout: "", stderr: "planner prepare --apply requires an agent run artifact writer\n" };
+      return fail("planner prepare --apply requires an agent run artifact writer", json);
     }
 
     try {
@@ -321,23 +305,19 @@ export async function runPlannerCli(
       });
       return render(0, result, json);
     } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: "",
-        stderr: `${error instanceof Error ? error.message : String(error)}\n`
-      };
+      return renderError(error, json);
     }
   }
 
   if (command === "run") {
     if (rest[0] === "review" || rest[0] === "accept" || rest[0] === "reject") {
       if (!services.runArtifactReader) {
-        return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires an agent run artifact reader\n` };
+        return fail(`planner run ${rest[0]} requires an agent run artifact reader`, json);
       }
 
       const runId = rest[1];
       if (!runId || runId.startsWith("--")) {
-        return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires <run-id>\n` };
+        return fail(`planner run ${rest[0]} requires <run-id>`, json);
       }
 
       try {
@@ -351,7 +331,7 @@ export async function runPlannerCli(
         }
 
         if (!services.changeLogWriter) {
-          return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires a planning change log writer\n` };
+          return fail(`planner run ${rest[0]} requires a planning change log writer`, json);
         }
 
         const result = await decideAgentRunUseCase({
@@ -369,29 +349,29 @@ export async function runPlannerCli(
     }
 
     if (!services.contextFileReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires a context file reader\n" };
+      return fail("planner run requires a context file reader", json);
     }
 
     if (!services.runArtifactWriter) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires an agent run artifact writer\n" };
+      return fail("planner run requires an agent run artifact writer", json);
     }
 
     if (!services.agentRunner) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires an agent runner\n" };
+      return fail("planner run requires an agent runner", json);
     }
 
     if (!services.validationCommandRunner) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires a validation command runner\n" };
+      return fail("planner run requires a validation command runner", json);
     }
 
     const workItemId = rest[0];
     if (!workItemId || workItemId.startsWith("--")) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires <work-item-id>\n" };
+      return fail("planner run requires <work-item-id>", json);
     }
 
     const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
-      return { exitCode: 1, stdout: "", stderr: "planner run requires --agent <codex|claude|gemini>\n" };
+      return fail("planner run requires --agent <codex|claude|gemini>", json);
     }
 
     try {
@@ -412,11 +392,19 @@ export async function runPlannerCli(
     }
   }
 
+  if (command) {
+    return fail(`Unknown command: ${command}`, json);
+  }
+
   return {
-    exitCode: command ? 1 : 0,
-    stdout: command ? "" : "planner CLI scaffold\n",
-    stderr: command ? `Unknown command: ${command}\n` : ""
+    exitCode: 0,
+    stdout: "planner CLI scaffold\n",
+    stderr: ""
   };
+}
+
+function fail(message: string, json: boolean): PlannerCliResult {
+  return renderError(new Error(message), json);
 }
 
 function renderError(error: unknown, json: boolean): PlannerCliResult {

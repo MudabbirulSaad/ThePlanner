@@ -54,6 +54,15 @@ const graph = parsePlanningGraphJson({
   edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
 });
 
+function expectJsonError(result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string }, message: string): void {
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout)).toEqual({
+    status: "failed",
+    error: { message }
+  });
+}
+
 describe("planner CLI use case wiring", () => {
   it("supports status JSON output through application use cases", async () => {
     const result = await runPlannerCli(["status", "--json"], {
@@ -98,11 +107,7 @@ describe("planner CLI use case wiring", () => {
       trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
     });
 
-    expect(result).toEqual({
-      exitCode: 1,
-      stdout: "",
-      stderr: "planner sync requires --dry-run; live sync is deferred\n"
-    });
+    expectJsonError(result, "planner sync requires --dry-run; live sync is deferred");
   });
 
   it("rejects tracker sync apply because external mutation is deferred", async () => {
@@ -112,11 +117,26 @@ describe("planner CLI use case wiring", () => {
       trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
     });
 
-    expect(result).toEqual({
-      exitCode: 1,
-      stdout: "",
-      stderr: "planner sync --apply is deferred; use --dry-run to preview tracker payloads\n"
+    expectJsonError(result, "planner sync --apply is deferred; use --dry-run to preview tracker payloads");
+  });
+
+  it("returns JSON error envelopes for argument errors", async () => {
+    const result = await runPlannerCli(["plan", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      refinedBriefReader: new FileRefinedBriefReader()
     });
+
+    expectJsonError(result, "planner plan requires --from <file>");
+  });
+
+  it("returns JSON error envelopes for service-wiring errors", async () => {
+    const result = await runPlannerCli(["init", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined }
+    });
+
+    expectJsonError(result, "planner init requires a workspace initializer");
   });
 
   it("uses configured default agent and validation command defaults", async () => {
@@ -559,8 +579,7 @@ describe("planner CLI use case wiring", () => {
         }
       );
 
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toBe("Refusing to overwrite existing non-empty planning/graph.json without an explicit force/update path.\n");
+      expectJsonError(result, "Refusing to overwrite existing non-empty planning/graph.json without an explicit force/update path.");
       expect(parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8"))).nodes).toHaveLength(graph.nodes.length);
       expect(await readFile("planning/change-log.ndjson", "utf8")).toBe("");
     } finally {
@@ -580,8 +599,7 @@ describe("planner CLI use case wiring", () => {
         projectionWriter: { writeAll: async () => undefined },
         refinedBriefReader: new FileRefinedBriefReader()
       });
-      expect(missing.exitCode).toBe(1);
-      expect(missing.stderr).toBe("Refined brief file not found: missing.md\n");
+      expectJsonError(missing, "Refined brief file not found: missing.md");
 
       await writeFile("empty.md", "\n", "utf8");
       const empty = await runPlannerCli(["plan", "--from", "empty.md", "--dry-run", "--json"], {
@@ -589,8 +607,7 @@ describe("planner CLI use case wiring", () => {
         projectionWriter: { writeAll: async () => undefined },
         refinedBriefReader: new FileRefinedBriefReader()
       });
-      expect(empty.exitCode).toBe(1);
-      expect(empty.stderr).toBe("Refined brief is empty: empty.md\n");
+      expectJsonError(empty, "Refined brief is empty: empty.md");
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
@@ -879,8 +896,7 @@ describe("planner CLI use case wiring", () => {
       projectionWriter: { writeAll: async () => undefined },
       contextFileReader: { readIfExists: async () => undefined }
     });
-    expect(missing.exitCode).toBe(1);
-    expect(missing.stderr).toBe("Work Item not found: wi-404\n");
+    expectJsonError(missing, "Work Item not found: wi-404");
 
     const blocked = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--dry-run", "--json"], {
       graphRepository: { load: async () => blockedGraph },
@@ -888,7 +904,8 @@ describe("planner CLI use case wiring", () => {
       contextFileReader: { readIfExists: async () => undefined }
     });
     expect(blocked.exitCode).toBe(1);
-    expect(blocked.stderr).toContain("Work Item is not agent-eligible for prepare: wi-001.");
+    expect(blocked.stderr).toBe("");
+    expect(JSON.parse(blocked.stdout).error.message).toContain("Work Item is not agent-eligible for prepare: wi-001.");
   });
 
   it("reports unsupported prepare agents clearly", async () => {
@@ -898,8 +915,7 @@ describe("planner CLI use case wiring", () => {
       contextFileReader: { readIfExists: async () => undefined }
     });
 
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toBe("Unsupported agent: unknown. Supported agents: codex, claude, gemini.\n");
+    expectJsonError(result, "Unsupported agent: unknown. Supported agents: codex, claude, gemini.");
   });
 
   it("runs a ready Work Item through a fake Codex runner from the CLI", async () => {
