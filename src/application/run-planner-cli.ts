@@ -10,6 +10,7 @@ import {
   intakeQuestionsUseCase,
   planFromBriefApplyUseCase,
   planFromBriefDryRunUseCase,
+  prepareAgentContextBundleUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
   statusUseCase,
@@ -17,6 +18,7 @@ import {
 } from "./planner-use-cases.js";
 import type {
   ChangeLogWriter,
+  ContextFileReader,
   GraphRepository,
   IntakeIdeaReader,
   JsonSchemaValidator,
@@ -37,6 +39,7 @@ export interface PlannerCliServices {
   readonly intakeIdeaReader?: IntakeIdeaReader;
   readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
+  readonly contextFileReader?: ContextFileReader;
 }
 
 type RenderableIntakeQuestionResult = {
@@ -223,6 +226,42 @@ export async function runPlannerCli(
     }
   }
 
+  if (command === "prepare") {
+    if (!services.contextFileReader) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare requires a context file reader\n" };
+    }
+
+    const workItemId = rest[0];
+    if (!workItemId || workItemId.startsWith("--")) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare requires <work-item-id>\n" };
+    }
+
+    const agent = readOption(rest, "--agent");
+    if (!agent) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare requires --agent <codex|claude|gemini>\n" };
+    }
+
+    if (!rest.includes("--dry-run")) {
+      return { exitCode: 1, stdout: "", stderr: "planner prepare currently requires --dry-run\n" };
+    }
+
+    try {
+      const result = await prepareAgentContextBundleUseCase({
+        graphRepository: services.graphRepository,
+        contextFileReader: services.contextFileReader,
+        workItemId,
+        agent
+      });
+      return render(0, result, json);
+    } catch (error) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: `${error instanceof Error ? error.message : String(error)}\n`
+      };
+    }
+  }
+
   return {
     exitCode: command ? 1 : 0,
     stdout: command ? "" : "planner CLI scaffold\n",
@@ -285,6 +324,14 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
         value.message,
         ""
       ].join("\n"),
+      stderr: ""
+    };
+  }
+
+  if (isAgentContextBundleResult(value)) {
+    return {
+      exitCode,
+      stdout: `${value.content}\n`,
       stderr: ""
     };
   }
@@ -358,6 +405,23 @@ function isRefinedBriefResult(value: unknown): value is {
       "sourcePath" in value &&
       "outPath" in value &&
       "message" in value
+  );
+}
+
+function isAgentContextBundleResult(value: unknown): value is {
+  readonly content: string;
+  readonly dryRun: true;
+  readonly applied: false;
+} {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "content" in value &&
+      typeof value.content === "string" &&
+      "dryRun" in value &&
+      value.dryRun === true &&
+      "applied" in value &&
+      value.applied === false
   );
 }
 

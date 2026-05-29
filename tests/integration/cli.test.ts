@@ -8,6 +8,7 @@ import { parsePlanningGraphJson } from "../../src/application/index.js";
 import { serializePlanningGraphJson } from "../../src/application/index.js";
 import {
   FileChangeLogWriter,
+  FileContextReader,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
   FilePlanningGraphSchemaValidator,
@@ -552,6 +553,165 @@ describe("planner CLI use case wiring", () => {
         }
       ]
     });
+  });
+
+  it("prepares a deterministic agent context bundle in dry-run mode without writing artifacts", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-prepare-"));
+    const graphWithDocuments = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Work",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+          }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        document_projections: [
+          {
+            id: "doc-001",
+            title: "Dependencies",
+            status: "active",
+            path: "planning/dependencies.md",
+            projection_type: "dependency_view"
+          },
+          {
+            id: "doc-002",
+            title: "Architecture",
+            status: "active",
+            path: "docs/architecture/proposed-architecture.md",
+            projection_type: "architecture"
+          }
+        ],
+        execution_slices: []
+      },
+      edges: [
+        { source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." },
+        { source: "doc-001", target: "wi-001", type: "references", rationale: "Generated dependency view." },
+        { source: "doc-002", target: "wi-001", type: "references", rationale: "Generated architecture context." }
+      ]
+    });
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("AGENTS.md", "# Repo Instructions\n\nStay in scope.\n", "utf8");
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graphWithDocuments), null, 2)}\n`, "utf8");
+      const before = await listWorkspaceFiles(".");
+
+      const result = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--dry-run", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => { throw new Error("prepare dry-run must not write projections"); } },
+        contextFileReader: new FileContextReader()
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(output).toMatchObject({
+        status: "prepared",
+        dryRun: true,
+        applied: false,
+        agent: "codex",
+        workItemId: "wi-001",
+        bundlePath: null,
+        validationCommands: ["npm test"],
+        context: [
+          { path: "AGENTS.md", source: "workspace" },
+          { path: "planning/work-items/wi-001-work.md", source: "generated" },
+          { path: "planning/dependencies.md", source: "generated" },
+          { path: "docs/architecture/proposed-architecture.md", source: "generated" }
+        ]
+      });
+      expect(output.content).toContain("# Agent Context Bundle");
+      expect(output.content).toContain("Paste this full bundle into Codex.");
+      expect(output.content).toContain("## Context: AGENTS.md");
+      expect(output.content).toContain("## Context: planning/dependencies.md");
+      expect(output.content).toContain("## Context: docs/architecture/proposed-architecture.md");
+      expect(await listWorkspaceFiles(".")).toEqual(before);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("returns useful prepare errors for missing and blocked Work Items", async () => {
+    const blockedGraph = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Blocked work",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+          },
+          {
+            id: "wi-002",
+            title: "Dependency work",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+          }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: [
+        { source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." },
+        { source: "wi-002", target: "req-001", type: "satisfies", rationale: "Traceability." },
+        { source: "wi-001", target: "wi-002", type: "depends_on", rationale: "Needs dependency." }
+      ]
+    });
+
+    const missing = await runPlannerCli(["prepare", "wi-404", "--agent", "codex", "--dry-run", "--json"], {
+      graphRepository: { load: async () => blockedGraph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined }
+    });
+    expect(missing.exitCode).toBe(1);
+    expect(missing.stderr).toBe("Work Item not found: wi-404\n");
+
+    const blocked = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--dry-run", "--json"], {
+      graphRepository: { load: async () => blockedGraph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined }
+    });
+    expect(blocked.exitCode).toBe(1);
+    expect(blocked.stderr).toContain("Work Item is not agent-eligible for prepare: wi-001.");
+  });
+
+  it("reports unsupported prepare agents clearly", async () => {
+    const result = await runPlannerCli(["prepare", "wi-001", "--agent", "unknown", "--dry-run", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined }
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("Unsupported agent: unknown. Supported agents: codex, claude, gemini.\n");
   });
 
   it("dry-runs and applies export through filesystem adapters", async () => {

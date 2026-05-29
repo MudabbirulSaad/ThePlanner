@@ -54,6 +54,7 @@ node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md
 node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --apply --json
 node dist/src/adapters/cli/index.js reconcile --json
 node dist/src/adapters/cli/index.js reconcile --apply --json
+node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --dry-run --json
 ```
 
 Command behavior:
@@ -69,6 +70,7 @@ Command behavior:
 - `plan --from <file> --apply --json`: validates the refined brief graph proposal, writes `planning/graph.json`, and appends `planning/change-log.ndjson`. Existing non-empty graphs are protected until a future explicit update or force path exists.
 - `reconcile`: reads Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
 - `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
+- `prepare <work-item-id> --agent <codex|claude|gemini> --dry-run --json`: verifies the Work Item exists and is agent-eligible, then prints a deterministic manual paste context bundle with `AGENTS.md`, the rendered Work Item projection, dependency view, related document projections, validation commands, and scope reminders. Dry run does not execute agents, write run artifacts, mutate source code, or mark Work Items done.
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
 

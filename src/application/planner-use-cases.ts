@@ -5,16 +5,22 @@ import {
   renderRefinedBriefScaffold,
   reconcileGraphProjections,
   renderAllProjections,
+  renderDocumentProjection,
+  renderWorkItemProjection,
   validatePlanningGraph,
   workItemProjectionPaths
 } from "../core/index.js";
 import type {
+  DocumentProjectionNode,
   GraphValidationResult,
   IntakeQuestionSet,
   PlanningGraph,
+  PlanningNodeId,
   ProjectionInput,
   ReconciliationResult,
-  RenderedProjection
+  RenderedProjection,
+  WorkItemId,
+  WorkItemNode
 } from "../core/index.js";
 import { graphSchemaTemplate } from "../templates/graph-schema-template.js";
 import { intakeBriefTemplate } from "../templates/intake-brief-template.js";
@@ -111,6 +117,35 @@ export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
 
 export interface RefinedBriefWriter {
   readonly write: (path: string, content: string, options?: { readonly overwrite?: boolean }) => Promise<RefinedBriefWriteStatus>;
+}
+
+export interface ContextFileReader {
+  readonly readIfExists: (path: string) => Promise<string | undefined>;
+}
+
+export type SupportedAgent = "codex" | "claude" | "gemini";
+
+export interface AgentContextBundleSection {
+  readonly path: string;
+  readonly source: "workspace" | "generated";
+  readonly content: string;
+}
+
+export interface AgentContextBundleResult {
+  readonly status: "prepared";
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly agent: SupportedAgent;
+  readonly workItemId: string;
+  readonly bundlePath: null;
+  readonly readiness: {
+    readonly labels: readonly string[];
+    readonly reasons: readonly string[];
+  };
+  readonly validationCommands: readonly string[];
+  readonly context: readonly AgentContextBundleSection[];
+  readonly content: string;
+  readonly message: string;
 }
 
 export interface ValidateGraphUseCaseResult {
@@ -560,6 +595,56 @@ export async function reconcileGraphUseCase(args: {
   };
 }
 
+export async function prepareAgentContextBundleUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly contextFileReader: ContextFileReader;
+  readonly workItemId: string;
+  readonly agent: string;
+}): Promise<AgentContextBundleResult> {
+  const agent = parseSupportedAgent(args.agent);
+  const graph = await args.graphRepository.load();
+  const validation = validatePlanningGraph(graph);
+  const workItem = graph.nodes.find((node): node is WorkItemNode => node.kind === "work_item" && node.id === args.workItemId);
+  if (!workItem) {
+    throw new Error(`Work Item not found: ${args.workItemId}`);
+  }
+
+  const readiness = validation.readinessSnapshots[workItem.id] ?? workItem.readinessSnapshot;
+  const blockingLabels = readiness.labels.filter((label) => label === "blocked" || label === "hitl_gated" || label === "human_only");
+  if (!readiness.labels.includes("agent_eligible") || blockingLabels.length > 0) {
+    const reasons = readiness.reasons.length > 0 ? readiness.reasons.join("; ") : `readiness labels: ${readiness.labels.join(", ")}`;
+    throw new Error(`Work Item is not agent-eligible for prepare: ${workItem.id}. ${reasons}`);
+  }
+
+  const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
+  const validationCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
+  const content = renderAgentContextBundle({
+    agent,
+    graph,
+    workItem,
+    readiness,
+    validationCommands,
+    context
+  });
+
+  return {
+    status: "prepared",
+    dryRun: true,
+    applied: false,
+    agent,
+    workItemId: workItem.id,
+    bundlePath: null,
+    readiness: {
+      labels: readiness.labels,
+      reasons: readiness.reasons
+    },
+    validationCommands,
+    context,
+    content,
+    message: "Dry run only. No agent was executed and no run artifacts were written."
+  };
+}
+
 export function createChangeLogEvent(args: {
   readonly graphVersionBefore: number;
   readonly graphVersionAfter: number;
@@ -596,6 +681,135 @@ function graphVersionFromJson(value: unknown): number {
   }
 
   return 0;
+}
+
+async function buildAgentContextSections(
+  graph: PlanningGraph,
+  workItem: WorkItemNode,
+  contextFileReader: ContextFileReader
+): Promise<readonly AgentContextBundleSection[]> {
+  const sections: AgentContextBundleSection[] = [];
+  const agents = await contextFileReader.readIfExists("AGENTS.md");
+  if (agents !== undefined) {
+    sections.push({ path: "AGENTS.md", source: "workspace", content: agents });
+  }
+
+  const workItemProjection = renderWorkItemProjection(graph, workItem);
+  sections.push({ path: workItemProjection.path, source: "generated", content: workItemProjection.content });
+
+  const dependencyView = graph.nodes
+    .filter(isDocumentProjectionNode)
+    .filter((document) => document.projectionType === "dependency_view")
+    .sort((left, right) => left.path.localeCompare(right.path))[0];
+  if (dependencyView) {
+    const rendered = renderDocumentProjection(graph, dependencyView);
+    sections.push({ path: rendered.path, source: "generated", content: rendered.content });
+  }
+
+  for (const document of relatedDocumentProjections(graph, workItem.id)) {
+    if (document.projectionType === "dependency_view") {
+      continue;
+    }
+    const rendered = renderDocumentProjection(graph, document);
+    sections.push({ path: rendered.path, source: "generated", content: rendered.content });
+  }
+
+  return sections;
+}
+
+function relatedDocumentProjections(graph: PlanningGraph, workItemId: WorkItemId): readonly DocumentProjectionNode[] {
+  const relatedIds = new Set<PlanningNodeId>([workItemId]);
+  for (const edge of graph.edges) {
+    if (edge.source === workItemId) {
+      relatedIds.add(edge.target);
+    }
+    if (edge.target === workItemId) {
+      relatedIds.add(edge.source);
+    }
+  }
+
+  return graph.nodes
+    .filter(isDocumentProjectionNode)
+    .filter((document) =>
+      graph.edges.some(
+        (edge) =>
+          edge.type === "references" &&
+          ((edge.source === document.id && relatedIds.has(edge.target)) ||
+            (relatedIds.has(edge.source) && edge.target === document.id))
+      )
+    )
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+function renderAgentContextBundle(args: {
+  readonly agent: SupportedAgent;
+  readonly graph: PlanningGraph;
+  readonly workItem: WorkItemNode;
+  readonly readiness: WorkItemNode["readinessSnapshot"];
+  readonly validationCommands: readonly string[];
+  readonly context: readonly AgentContextBundleSection[];
+}): string {
+  return [
+    "# Agent Context Bundle",
+    "",
+    `Agent: ${args.agent}`,
+    `Work Item: ${args.workItem.id} - ${args.workItem.title}`,
+    `Graph Version: ${args.graph.graphVersion}`,
+    `Readiness: ${args.readiness.labels.join(", ")}`,
+    "",
+    "## Manual Use",
+    "",
+    `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from planner prepare.`,
+    "",
+    "## Scope Reminder",
+    "",
+    `- Complete only Work Item ${args.workItem.id}.`,
+    "- Preserve unrelated existing changes.",
+    "- Do not add product features outside this Work Item.",
+    "- Do not mark Work Items done from this bundle.",
+    "- Do not call live LLM providers or external services unless the Work Item explicitly requires it.",
+    "",
+    "## Validation Commands",
+    "",
+    list(args.validationCommands),
+    "",
+    ...args.context.flatMap((section) => [
+      `## Context: ${section.path}`,
+      "",
+      `Source: ${section.source}`,
+      "",
+      fence("markdown", section.content),
+      ""
+    ])
+  ].join("\n");
+}
+
+function parseSupportedAgent(agent: string): SupportedAgent {
+  if (agent === "codex" || agent === "claude" || agent === "gemini") {
+    return agent;
+  }
+
+  throw new Error(`Unsupported agent: ${agent}. Supported agents: codex, claude, gemini.`);
+}
+
+function agentDisplayName(agent: SupportedAgent): string {
+  return {
+    codex: "Codex",
+    claude: "Claude Code",
+    gemini: "Gemini CLI"
+  }[agent];
+}
+
+function fence(language: string, content: string): string {
+  return `${content.includes("```") ? "````" : "```"}${language}\n${content.trimEnd()}\n${content.includes("```") ? "````" : "```"}`;
+}
+
+function list(values: readonly string[]): string {
+  return values.length === 0 ? "- None" : values.map((value) => `- ${value}`).join("\n");
+}
+
+function isDocumentProjectionNode(node: { readonly kind: string }): node is DocumentProjectionNode {
+  return node.kind === "document_projection";
 }
 
 type JsonLoadFailure = {

@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "../../application/index.js";
 import type {
   ChangeLogWriter,
+  ContextFileReader,
   GraphRepository,
   IntakeIdeaReader,
   PlanningChangeLogEvent,
@@ -131,6 +132,19 @@ export class FileRefinedBriefReader implements RefinedBriefReader {
     } catch (error) {
       if (isNotFound(error)) {
         throw new Error(`Refined brief file not found: ${path}`);
+      }
+      throw error;
+    }
+  }
+}
+
+export class FileContextReader implements ContextFileReader {
+  public async readIfExists(path: string): Promise<string | undefined> {
+    try {
+      return await readFile(resolve(path), "utf8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        return undefined;
       }
       throw error;
     }
