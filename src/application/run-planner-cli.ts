@@ -13,10 +13,12 @@ import {
   prepareAgentContextBundleUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
+  runAgentUseCase,
   statusUseCase,
   validateGraphUseCase
 } from "./planner-use-cases.js";
 import type {
+  AgentRunner,
   AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
@@ -42,6 +44,7 @@ export interface PlannerCliServices {
   readonly refinedBriefWriter?: RefinedBriefWriter;
   readonly contextFileReader?: ContextFileReader;
   readonly runArtifactWriter?: AgentRunArtifactWriter;
+  readonly agentRunner?: AgentRunner;
   readonly currentTimestamp?: () => string;
 }
 
@@ -274,10 +277,66 @@ export async function runPlannerCli(
     }
   }
 
+  if (command === "run") {
+    if (!services.contextFileReader) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires a context file reader\n" };
+    }
+
+    if (!services.runArtifactWriter) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires an agent run artifact writer\n" };
+    }
+
+    if (!services.agentRunner) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires an agent runner\n" };
+    }
+
+    const workItemId = rest[0];
+    if (!workItemId || workItemId.startsWith("--")) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires <work-item-id>\n" };
+    }
+
+    const agent = readOption(rest, "--agent");
+    if (!agent) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires --agent <codex>\n" };
+    }
+
+    try {
+      const result = await runAgentUseCase({
+        graphRepository: services.graphRepository,
+        contextFileReader: services.contextFileReader,
+        runArtifactWriter: services.runArtifactWriter,
+        agentRunner: services.agentRunner,
+        workItemId,
+        agent,
+        timestamp: services.currentTimestamp?.()
+      });
+      return render(result.status === "completed" ? 0 : 1, result, json);
+    } catch (error) {
+      return renderError(error, json);
+    }
+  }
+
   return {
     exitCode: command ? 1 : 0,
     stdout: command ? "" : "planner CLI scaffold\n",
     stderr: command ? `Unknown command: ${command}\n` : ""
+  };
+}
+
+function renderError(error: unknown, json: boolean): PlannerCliResult {
+  const message = error instanceof Error ? error.message : String(error);
+  if (json) {
+    return {
+      exitCode: 1,
+      stdout: `${JSON.stringify({ status: "failed", error: { message } }, null, 2)}\n`,
+      stderr: ""
+    };
+  }
+
+  return {
+    exitCode: 1,
+    stdout: "",
+    stderr: `${message}\n`
   };
 }
 

@@ -11,8 +11,11 @@ import {
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
   FileWorkspaceInitializer,
-  FilePlanningGraphSchemaValidator
+  FilePlanningGraphSchemaValidator,
+  CodexProcessRunner
 } from "../index.js";
+
+const runnerCommand = readOption(process.argv.slice(2), "--runner-command");
 
 const result = await runPlannerCli(process.argv.slice(2), {
   graphRepository: new FilePlanningGraphRepository(),
@@ -25,7 +28,8 @@ const result = await runPlannerCli(process.argv.slice(2), {
   refinedBriefReader: new FileRefinedBriefReader(),
   refinedBriefWriter: new FileRefinedBriefWriter(),
   contextFileReader: new FileContextReader(),
-  runArtifactWriter: new FileAgentRunArtifactWriter()
+  runArtifactWriter: new FileAgentRunArtifactWriter(),
+  agentRunner: new CodexProcessRunner(runnerCommand)
 });
 
 if (result.stdout) {
@@ -37,3 +41,12 @@ if (result.stderr) {
 }
 
 process.exitCode = result.exitCode;
+
+function readOption(args: readonly string[], option: string): string | undefined {
+  const index = args.indexOf(option);
+  if (index === -1) {
+    return undefined;
+  }
+
+  return args[index + 1];
+}

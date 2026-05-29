@@ -133,6 +133,32 @@ export interface AgentRunArtifactWriter {
 }
 
 export type SupportedAgent = "codex" | "claude" | "gemini";
+export type RunnableAgent = "codex";
+
+export interface AgentRunnerInput {
+  readonly agent: RunnableAgent;
+  readonly workItemId: string;
+  readonly runId: string;
+  readonly prompt: string;
+  readonly runDirectory: string;
+}
+
+export interface AgentRunnerError {
+  readonly code: string;
+  readonly message: string;
+}
+
+export interface AgentRunnerResult {
+  readonly command: readonly string[];
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: AgentRunnerError;
+}
+
+export interface AgentRunner {
+  readonly run: (input: AgentRunnerInput) => Promise<AgentRunnerResult>;
+}
 
 export interface AgentContextBundleSection {
   readonly path: string;
@@ -168,6 +194,33 @@ export interface AgentRunMetadata {
   readonly agent: SupportedAgent;
   readonly generatedAt: string;
   readonly validationCommands: readonly string[];
+}
+
+export interface AgentExecutionRunMetadata extends AgentRunMetadata {
+  readonly agent: RunnableAgent;
+}
+
+export interface AgentExecutionResult {
+  readonly status: "completed" | "failed";
+  readonly agent: RunnableAgent;
+  readonly workItemId: string;
+  readonly runId: string;
+  readonly runDirectory: string;
+  readonly bundlePath: string;
+  readonly artifactPaths: readonly string[];
+  readonly createdPaths: readonly string[];
+  readonly metadata: AgentExecutionRunMetadata;
+  readonly readiness: {
+    readonly labels: readonly string[];
+    readonly reasons: readonly string[];
+  };
+  readonly validationCommands: readonly string[];
+  readonly runner: {
+    readonly command: readonly string[];
+    readonly exitCode: number;
+    readonly error?: AgentRunnerError;
+  };
+  readonly message: string;
 }
 
 export interface ValidateGraphUseCaseResult {
@@ -645,6 +698,7 @@ export async function prepareAgentContextBundleUseCase(args: {
   const validationCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
   const content = renderAgentContextBundle({
     agent,
+    mode: "prepare",
     graph,
     workItem,
     readiness,
@@ -720,6 +774,112 @@ export async function prepareAgentContextBundleUseCase(args: {
     context,
     content,
     message: "Dry run only. No agent was executed and no run artifacts were written."
+  };
+}
+
+export async function runAgentUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly contextFileReader: ContextFileReader;
+  readonly runArtifactWriter: AgentRunArtifactWriter;
+  readonly agentRunner: AgentRunner;
+  readonly workItemId: string;
+  readonly agent: string;
+  readonly timestamp?: string;
+}): Promise<AgentExecutionResult> {
+  const agent = parseRunnableAgent(args.agent);
+  const graph = await args.graphRepository.load();
+  const validation = validatePlanningGraph(graph);
+  const workItem = graph.nodes.find((node): node is WorkItemNode => node.kind === "work_item" && node.id === args.workItemId);
+  if (!workItem) {
+    throw new Error(`Work Item not found: ${args.workItemId}`);
+  }
+
+  const readiness = validation.readinessSnapshots[workItem.id] ?? workItem.readinessSnapshot;
+  const blockingLabels = readiness.labels.filter((label) => label === "blocked" || label === "hitl_gated" || label === "human_only");
+  if (!readiness.labels.includes("agent_eligible") || !readiness.labels.includes("afk_ready") || blockingLabels.length > 0) {
+    const reasons = readiness.reasons.length > 0 ? readiness.reasons.join("; ") : `readiness labels: ${readiness.labels.join(", ")}`;
+    throw new Error(`Work Item is not ready for agent run: ${workItem.id}. ${reasons}`);
+  }
+
+  const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
+  const validationCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
+  const prompt = renderAgentContextBundle({
+    agent,
+    mode: "run",
+    graph,
+    workItem,
+    readiness,
+    validationCommands,
+    context
+  });
+
+  const generatedAt = args.timestamp ?? new Date().toISOString();
+  const runId = createAgentRunId(generatedAt, workItem.id);
+  const runDirectory = `planning/runs/${runId}`;
+  const metadataPath = `${runDirectory}/metadata.json`;
+  const promptPath = `${runDirectory}/prompt.md`;
+  const contextPath = `${runDirectory}/context.md`;
+  const stdoutPath = `${runDirectory}/runner-stdout.log`;
+  const stderrPath = `${runDirectory}/runner-stderr.log`;
+  const resultPath = `${runDirectory}/result.json`;
+  const metadata: AgentExecutionRunMetadata = {
+    runId,
+    workItemId: workItem.id,
+    graphVersion: graph.graphVersion,
+    agent,
+    generatedAt,
+    validationCommands
+  };
+
+  const runnerResult = await args.agentRunner.run({
+    agent,
+    workItemId: workItem.id,
+    runId,
+    prompt,
+    runDirectory
+  });
+
+  const status = runnerResult.exitCode === 0 && !runnerResult.error ? "completed" : "failed";
+  const result: AgentExecutionResult = {
+    status,
+    agent,
+    workItemId: workItem.id,
+    runId,
+    runDirectory,
+    bundlePath: promptPath,
+    artifactPaths: [metadataPath, promptPath, contextPath, stdoutPath, stderrPath, resultPath],
+    createdPaths: [metadataPath, promptPath, contextPath, stdoutPath, stderrPath, resultPath],
+    metadata,
+    readiness: {
+      labels: readiness.labels,
+      reasons: readiness.reasons
+    },
+    validationCommands,
+    runner: {
+      command: runnerResult.command,
+      exitCode: runnerResult.exitCode,
+      ...(runnerResult.error ? { error: runnerResult.error } : {})
+    },
+    message:
+      status === "completed"
+        ? `Agent run completed and artifacts were written to ${runDirectory}.`
+        : `Agent run failed with exit code ${runnerResult.exitCode}; artifacts were written to ${runDirectory}.`
+  };
+
+  const files: readonly AgentRunArtifactFile[] = [
+    { path: metadataPath, content: `${JSON.stringify(metadata, null, 2)}\n` },
+    { path: promptPath, content: prompt },
+    { path: contextPath, content: renderAgentContextMarkdown(context) },
+    { path: stdoutPath, content: runnerResult.stdout },
+    { path: stderrPath, content: runnerResult.stderr },
+    { path: resultPath, content: `${JSON.stringify(result, null, 2)}\n` }
+  ];
+  const writtenPaths = await args.runArtifactWriter.writeAll(files);
+
+  return {
+    ...result,
+    artifactPaths: writtenPaths ? [...writtenPaths] : result.artifactPaths,
+    createdPaths: writtenPaths ? [...writtenPaths] : result.createdPaths
   };
 }
 
@@ -821,12 +981,26 @@ function relatedDocumentProjections(graph: PlanningGraph, workItemId: WorkItemId
 
 function renderAgentContextBundle(args: {
   readonly agent: SupportedAgent;
+  readonly mode: "prepare" | "run";
   readonly graph: PlanningGraph;
   readonly workItem: WorkItemNode;
   readonly readiness: WorkItemNode["readinessSnapshot"];
   readonly validationCommands: readonly string[];
   readonly context: readonly AgentContextBundleSection[];
 }): string {
+  const usageSection =
+    args.mode === "prepare"
+      ? [
+          "## Manual Use",
+          "",
+          `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from planner prepare.`
+        ]
+      : [
+          "## Run Instructions",
+          "",
+          `You are being invoked by planner run as ${agentDisplayName(args.agent)}. Complete the selected Work Item only, then stop.`
+        ];
+
   return [
     "# Agent Context Bundle",
     "",
@@ -835,9 +1009,7 @@ function renderAgentContextBundle(args: {
     `Graph Version: ${args.graph.graphVersion}`,
     `Readiness: ${args.readiness.labels.join(", ")}`,
     "",
-    "## Manual Use",
-    "",
-    `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from planner prepare.`,
+    ...usageSection,
     "",
     "## Scope Reminder",
     "",
@@ -893,6 +1065,14 @@ function parseSupportedAgent(agent: string): SupportedAgent {
   }
 
   throw new Error(`Unsupported agent: ${agent}. Supported agents: codex, claude, gemini.`);
+}
+
+function parseRunnableAgent(agent: string): RunnableAgent {
+  if (agent === "codex") {
+    return agent;
+  }
+
+  throw new Error(`Unsupported run agent: ${agent}. Supported run agents: codex.`);
 }
 
 function agentDisplayName(agent: SupportedAgent): string {

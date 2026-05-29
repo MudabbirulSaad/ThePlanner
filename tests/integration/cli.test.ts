@@ -22,6 +22,7 @@ import {
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
+import type { AgentRunner } from "../../src/application/index.js";
 import type { PlanningGraph } from "../../src/core/index.js";
 
 const graph = parsePlanningGraphJson({
@@ -779,6 +780,83 @@ describe("planner CLI use case wiring", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toBe("Unsupported agent: unknown. Supported agents: codex, claude, gemini.\n");
+  });
+
+  it("runs a ready Work Item through a fake Codex runner from the CLI", async () => {
+    const runner: AgentRunner = {
+      run: async (input) => ({
+        command: ["codex"],
+        exitCode: 0,
+        stdout: `ran ${input.workItemId}\n`,
+        stderr: ""
+      })
+    };
+
+    const result = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
+      agentRunner: runner,
+      currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "completed",
+      agent: "codex",
+      workItemId: "wi-001",
+      runId: "run-20260529-123456-wi-001",
+      runner: {
+        command: ["codex"],
+        exitCode: 0
+      },
+      artifactPaths: [
+        "planning/runs/run-20260529-123456-wi-001/metadata.json",
+        "planning/runs/run-20260529-123456-wi-001/prompt.md",
+        "planning/runs/run-20260529-123456-wi-001/context.md",
+        "planning/runs/run-20260529-123456-wi-001/runner-stdout.log",
+        "planning/runs/run-20260529-123456-wi-001/runner-stderr.log",
+        "planning/runs/run-20260529-123456-wi-001/result.json"
+      ]
+    });
+  });
+
+  it("returns useful JSON when the Codex runner is missing", async () => {
+    const runner: AgentRunner = {
+      run: async () => ({
+        command: ["codex"],
+        exitCode: 127,
+        stdout: "",
+        stderr: "",
+        error: {
+          code: "runner_not_found",
+          message: "Codex runner command not found: codex"
+        }
+      })
+    };
+
+    const result = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
+      agentRunner: runner,
+      currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "failed",
+      runner: {
+        exitCode: 127,
+        error: {
+          code: "runner_not_found",
+          message: "Codex runner command not found: codex"
+        }
+      }
+    });
   });
 
   it("dry-runs and applies export through filesystem adapters", async () => {
