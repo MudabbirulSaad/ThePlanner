@@ -92,4 +92,18 @@ describe("graph validation and readiness", () => {
     expect(codes).toContain("blocker_missing_cause");
     expect(codes).toContain("work_item_dependency_cycle");
   });
+
+  it("rejects Document Projection paths outside the workspace", () => {
+    const raw = cloneGraph();
+    raw.nodes.document_projections[0].path = "../outside.md";
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.semanticErrors).toContainEqual(
+      expect.objectContaining({
+        code: "document_projection_unsafe_path",
+        nodeId: raw.nodes.document_projections[0].id
+      })
+    );
+  });
 });

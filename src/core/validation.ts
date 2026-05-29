@@ -97,6 +97,14 @@ export function validatePlanningGraph(graph: PlanningGraph): GraphValidationResu
         nodeId: document.id
       });
     }
+
+    if (document.path && !isSafeRelativePath(document.path)) {
+      semanticErrors.push({
+        code: "document_projection_unsafe_path",
+        message: `Document Projection path must be a safe relative path within the workspace: ${document.id}`,
+        nodeId: document.id
+      });
+    }
   }
 
   const cycles = detectWorkItemCycles(graph, nodeById);
@@ -322,4 +330,14 @@ function isHitlGate(node: PlanningNode): node is HitlGateNode {
 
 function isDocumentProjection(node: PlanningNode): node is DocumentProjectionNode {
   return node.kind === "document_projection";
+}
+
+function isSafeRelativePath(path: string): boolean {
+  const parts = path.split(/[\\/]/u);
+  return (
+    path.trim() !== "" &&
+    !path.startsWith("/") &&
+    !/^[A-Za-z]:[\\/]/u.test(path) &&
+    !parts.some((part) => part === "" || part === "." || part === "..")
+  );
 }

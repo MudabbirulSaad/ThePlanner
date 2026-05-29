@@ -1218,6 +1218,52 @@ describe("planner CLI use case wiring", () => {
     }
   });
 
+  it("refuses unsafe projection paths during filesystem export", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-export-unsafe-"));
+    const rawGraph = serializePlanningGraphJson(graph) as {
+      nodes: {
+        document_projections: {
+          id: string;
+          title: string;
+          path: string;
+          projection_type: string;
+        }[];
+      };
+    };
+    rawGraph.nodes.document_projections.push({
+      id: "doc-001",
+      title: "Unsafe projection",
+      path: "../outside.md",
+      projection_type: "dependency_view"
+    });
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(rawGraph, null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["export", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: new FileProjectionWriter(),
+        projectionReader: new FileProjectionReader()
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "failed",
+        error: {
+          message: "Projection path must be a safe relative path within the workspace: ../outside.md"
+        }
+      });
+      await expect(readFile("../outside.md", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("supports reconcile JSON output without applying graph mutations", async () => {
     let saved: PlanningGraph | undefined;
     const workItem = graph.nodes.find((node) => node.kind === "work_item");

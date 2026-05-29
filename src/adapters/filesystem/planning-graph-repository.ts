@@ -256,6 +256,10 @@ function identityPath(path: string): string {
 }
 
 async function resolveProjectionPath(path: string): Promise<string> {
+  if (!isSafeRelativePath(path)) {
+    throw new Error(`Projection path must be a safe relative path within the workspace: ${path}`);
+  }
+
   try {
     await readFile(resolve(path), "utf8");
     return path;
@@ -283,6 +287,16 @@ async function resolveProjectionPath(path: string): Promise<string> {
 
   const candidates = entries.filter((entry) => entry.startsWith(`${id}-`) && entry.endsWith(".md"));
   return candidates.length === 1 ? `${directory}/${candidates[0]}` : path;
+}
+
+function isSafeRelativePath(path: string): boolean {
+  const parts = path.split(/[\\/]/u);
+  return (
+    path.trim() !== "" &&
+    !path.startsWith("/") &&
+    !/^[A-Za-z]:[\\/]/u.test(path) &&
+    !parts.some((part) => part === "" || part === "." || part === "..")
+  );
 }
 
 function isNotFound(error: unknown): boolean {

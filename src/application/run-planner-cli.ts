@@ -104,13 +104,17 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner export --dry-run requires a projection reader\n" };
     }
 
-    const result = await exportProjectionsUseCase({
-      graphRepository: services.graphRepository,
-      projectionWriter: services.projectionWriter,
-      projectionReader: services.projectionReader,
-      apply: !dryRun
-    });
-    return render(0, result, json);
+    try {
+      const result = await exportProjectionsUseCase({
+        graphRepository: services.graphRepository,
+        projectionWriter: services.projectionWriter,
+        projectionReader: services.projectionReader,
+        apply: !dryRun
+      });
+      return render(0, result, json);
+    } catch (error) {
+      return renderError(error, json);
+    }
   }
 
   if (command === "init") {
