@@ -4,6 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "../../application/index.js";
 import type {
   AgentRunArtifactFile,
+  AgentRunArtifactReader,
   AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
@@ -125,6 +126,19 @@ export class FileAgentRunArtifactWriter implements AgentRunArtifactWriter {
     }
 
     return writtenPaths;
+  }
+}
+
+export class FileAgentRunArtifactReader implements AgentRunArtifactReader {
+  public async read(path: string): Promise<string> {
+    try {
+      return await readFile(resolve(path), "utf8");
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new Error(`Agent run artifact not found: ${path}`);
+      }
+      throw error;
+    }
   }
 }
 

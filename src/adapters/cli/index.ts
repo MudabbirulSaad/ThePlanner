@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { runPlannerCli } from "../../application/index.js";
 import {
+  FileAgentRunArtifactReader,
   FileAgentRunArtifactWriter,
   FileChangeLogWriter,
   FileContextReader,
@@ -29,6 +30,7 @@ const result = await runPlannerCli(process.argv.slice(2), {
   refinedBriefReader: new FileRefinedBriefReader(),
   refinedBriefWriter: new FileRefinedBriefWriter(),
   contextFileReader: new FileContextReader(),
+  runArtifactReader: new FileAgentRunArtifactReader(),
   runArtifactWriter: new FileAgentRunArtifactWriter(),
   agentRunner: new CodexProcessRunner(runnerCommand),
   validationCommandRunner: new ProcessValidationCommandRunner()

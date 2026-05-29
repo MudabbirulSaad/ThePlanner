@@ -132,6 +132,10 @@ export interface AgentRunArtifactWriter {
   readonly writeAll: (files: readonly AgentRunArtifactFile[]) => Promise<readonly string[] | void>;
 }
 
+export interface AgentRunArtifactReader {
+  readonly read: (path: string) => Promise<string>;
+}
+
 export type SupportedAgent = "codex" | "claude" | "gemini";
 export type RunnableAgent = "codex";
 
@@ -250,6 +254,36 @@ export interface AgentExecutionResult {
     readonly exitCode: number;
     readonly error?: AgentRunnerError;
   };
+  readonly message: string;
+}
+
+export interface AgentRunReviewResult {
+  readonly status: "ready_for_review";
+  readonly runId: string;
+  readonly runDirectory: string;
+  readonly workItem: {
+    readonly id: string;
+    readonly title?: string;
+  };
+  readonly agent: RunnableAgent;
+  readonly graphVersion: number;
+  readonly generatedAt: string;
+  readonly changedFiles: readonly string[];
+  readonly runner: {
+    readonly command: readonly string[];
+    readonly exitCode: number;
+    readonly error?: AgentRunnerError;
+  };
+  readonly validation: AgentRunValidationSummary;
+  readonly artifacts: readonly string[];
+  readonly message: string;
+}
+
+export interface AgentRunDecisionResult {
+  readonly status: "accepted" | "rejected";
+  readonly runId: string;
+  readonly workItemId: string;
+  readonly event: PlanningChangeLogEvent;
   readonly message: string;
 }
 
@@ -966,6 +1000,75 @@ export async function runAgentUseCase(args: {
   };
 }
 
+export async function reviewAgentRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly runArtifactReader: AgentRunArtifactReader;
+  readonly runId: string;
+}): Promise<AgentRunReviewResult> {
+  const summary = await loadAgentRunSummary(args.runArtifactReader, args.runId);
+  const graph = await args.graphRepository.load();
+  const workItem = graph.nodes.find(
+    (node): node is WorkItemNode => node.kind === "work_item" && node.id === summary.metadata.workItemId
+  );
+
+  return {
+    status: "ready_for_review",
+    runId: summary.metadata.runId,
+    runDirectory: summary.runDirectory,
+    workItem: {
+      id: summary.metadata.workItemId,
+      ...(workItem ? { title: workItem.title } : {})
+    },
+    agent: summary.metadata.agent,
+    graphVersion: summary.metadata.graphVersion,
+    generatedAt: summary.metadata.generatedAt,
+    changedFiles: summary.changedFiles,
+    runner: summary.runner,
+    validation: summary.metadata.validation,
+    artifacts: summary.artifacts,
+    message: `Review run ${summary.metadata.runId} before accepting or rejecting its planning impact.`
+  };
+}
+
+export async function decideAgentRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly runArtifactReader: AgentRunArtifactReader;
+  readonly changeLogWriter: ChangeLogWriter;
+  readonly runId: string;
+  readonly decision: "accepted" | "rejected";
+  readonly timestamp?: string;
+}): Promise<AgentRunDecisionResult> {
+  const summary = await loadAgentRunSummary(args.runArtifactReader, args.runId);
+  const graph = await args.graphRepository.load();
+  const timestamp = args.timestamp ?? new Date().toISOString();
+  const event = createChangeLogEvent({
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: graph.graphVersion,
+    affectedNodeIds: [summary.metadata.workItemId],
+    actor: "human",
+    timestamp,
+    operationType: args.decision === "accepted" ? "agent_run_accepted" : "agent_run_rejected",
+    approvalStatus: args.decision,
+    summary:
+      args.decision === "accepted"
+        ? `Accepted agent run ${summary.metadata.runId} for Work Item ${summary.metadata.workItemId}.`
+        : `Rejected agent run ${summary.metadata.runId} for Work Item ${summary.metadata.workItemId}.`,
+    provenanceReference: `${summary.runDirectory}/result.json`
+  });
+  await args.changeLogWriter.append(event);
+
+  return {
+    status: args.decision,
+    runId: summary.metadata.runId,
+    workItemId: summary.metadata.workItemId,
+    event,
+    message:
+      args.decision === "accepted"
+        ? `Accepted run ${summary.metadata.runId}. No Work Item state was changed automatically.`
+        : `Rejected run ${summary.metadata.runId}. No Work Item state was changed automatically.`
+  };
+}
+
 export function createChangeLogEvent(args: {
   readonly graphVersionBefore: number;
   readonly graphVersionAfter: number;
@@ -989,6 +1092,172 @@ export function createChangeLogEvent(args: {
     summary: args.summary,
     provenance_reference: args.provenanceReference
   };
+}
+
+interface LoadedAgentRunSummary {
+  readonly runDirectory: string;
+  readonly metadata: AgentExecutionRunMetadata;
+  readonly runner: AgentExecutionResult["runner"];
+  readonly changedFiles: readonly string[];
+  readonly artifacts: readonly string[];
+}
+
+interface ParsedAgentExecutionResult extends Pick<AgentExecutionResult, "runId" | "runner" | "artifactPaths"> {
+  readonly changedFiles: readonly string[];
+}
+
+async function loadAgentRunSummary(
+  runArtifactReader: AgentRunArtifactReader,
+  runId: string
+): Promise<LoadedAgentRunSummary> {
+  if (!/^run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}$/u.test(runId)) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+
+  const runDirectory = `planning/runs/${runId}`;
+  const metadata = parseAgentExecutionRunMetadata(
+    await readRunArtifact(runArtifactReader, `${runDirectory}/metadata.json`, runId)
+  );
+  const result = parseAgentExecutionResult(await readRunArtifact(runArtifactReader, `${runDirectory}/result.json`, runId));
+
+  if (metadata.runId !== runId || result.runId !== runId) {
+    throw new Error(`Run artifact id mismatch for: ${runId}`);
+  }
+
+  return {
+    runDirectory,
+    metadata,
+    runner: result.runner,
+    changedFiles: result.changedFiles,
+    artifacts: result.artifactPaths
+  };
+}
+
+async function readRunArtifact(runArtifactReader: AgentRunArtifactReader, path: string, runId: string): Promise<string> {
+  try {
+    return await runArtifactReader.read(path);
+  } catch (error) {
+    throw new Error(`Run artifacts not found for ${runId}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function parseAgentExecutionRunMetadata(content: string): AgentExecutionRunMetadata {
+  const value = parseJsonObject(content, "run metadata");
+  const validation = readValidationSummary(value.validation);
+  const agent = value.agent;
+  if (agent !== "codex") {
+    throw new Error("Run metadata is not a runnable agent metadata artifact.");
+  }
+
+  return {
+    runId: readString(value.runId, "metadata.runId"),
+    workItemId: readString(value.workItemId, "metadata.workItemId"),
+    graphVersion: readInteger(value.graphVersion, "metadata.graphVersion"),
+    agent,
+    generatedAt: readString(value.generatedAt, "metadata.generatedAt"),
+    validationCommands: readStringArray(value.validationCommands, "metadata.validationCommands"),
+    validation
+  };
+}
+
+function parseAgentExecutionResult(content: string): ParsedAgentExecutionResult {
+  const value = parseJsonObject(content, "run result");
+  const runner = parseJsonObjectProperty(value.runner, "result.runner");
+
+  return {
+    runId: readString(value.runId, "result.runId"),
+    runner: {
+      command: readStringArray(runner.command, "result.runner.command"),
+      exitCode: readInteger(runner.exitCode, "result.runner.exitCode"),
+      ...(runner.error ? { error: readRunnerError(runner.error) } : {})
+    },
+    artifactPaths: readStringArray(value.artifactPaths, "result.artifactPaths"),
+    changedFiles: readStringArrayProperty(value, "changedFiles") ?? readStringArrayProperty(value, "changed_files") ?? []
+  };
+}
+
+function parseJsonObject(content: string, artifactName: string): Record<string, unknown> {
+  try {
+    return parseJsonObjectProperty(JSON.parse(content), artifactName);
+  } catch (error) {
+    throw new Error(`Invalid ${artifactName}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function parseJsonObjectProperty(value: unknown, path: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${path} must be an object.`);
+  }
+
+  return value as Record<string, unknown>;
+}
+
+function readValidationSummary(value: unknown): AgentRunValidationSummary {
+  const summary = parseJsonObjectProperty(value, "metadata.validation");
+  const status = summary.status;
+  if (status !== "pass" && status !== "fail") {
+    throw new Error("metadata.validation.status must be pass or fail.");
+  }
+
+  const commands = readArray(summary.commands, "metadata.validation.commands").map((command, index) => {
+    const commandObject = parseJsonObjectProperty(command, `metadata.validation.commands[${index}]`);
+    return {
+      command: readString(commandObject.command, `metadata.validation.commands[${index}].command`),
+      exitCode: readInteger(commandObject.exitCode, `metadata.validation.commands[${index}].exitCode`),
+      ...(commandObject.error ? { error: readRunnerError(commandObject.error) } : {})
+    };
+  });
+
+  return { status, commands };
+}
+
+function readRunnerError(value: unknown): AgentRunnerError {
+  const error = parseJsonObjectProperty(value, "runner.error");
+  return {
+    code: readString(error.code, "runner.error.code"),
+    message: readString(error.message, "runner.error.message")
+  };
+}
+
+function readString(value: unknown, path: string): string {
+  if (typeof value !== "string") {
+    throw new Error(`${path} must be a string.`);
+  }
+
+  return value;
+}
+
+function readInteger(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error(`${path} must be an integer.`);
+  }
+
+  return value;
+}
+
+function readArray(value: unknown, path: string): readonly unknown[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array.`);
+  }
+
+  return value;
+}
+
+function readStringArray(value: unknown, path: string): readonly string[] {
+  const values = readArray(value, path);
+  if (!values.every((entry) => typeof entry === "string")) {
+    throw new Error(`${path} must contain only strings.`);
+  }
+
+  return values;
+}
+
+function readStringArrayProperty(value: unknown, key: string): readonly string[] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !(key in value)) {
+    return undefined;
+  }
+
+  return readStringArray((value as Record<string, unknown>)[key], key);
 }
 
 function isEmptyPlanningGraph(graph: PlanningGraph): boolean {

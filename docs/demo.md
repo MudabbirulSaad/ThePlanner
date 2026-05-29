@@ -52,7 +52,7 @@ The planning change log at `planning/change-log.ndjson` records graph-changing e
 
 - No live LLM calls.
 - No external tracker sync.
-- No autonomous coding-agent execution.
+- No autonomous multi-agent execution. `planner run` can invoke Codex explicitly for one Work Item, then human review is still required through saved run artifacts and accept/reject audit events.
 - `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs are deferred.
 - CLI validation runs JSON Schema validation before semantic validation; semantic validation is skipped when schema validation fails.
 - Reconciliation supports safe V1 fields and reports richer Markdown sections or unsupported relationships as `unsupportedProjectionEdits`.

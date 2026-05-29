@@ -8,17 +8,20 @@ import {
   exportProjectionsUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
+  decideAgentRunUseCase,
   planFromBriefApplyUseCase,
   planFromBriefDryRunUseCase,
   prepareAgentContextBundleUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
+  reviewAgentRunUseCase,
   runAgentUseCase,
   statusUseCase,
   validateGraphUseCase
 } from "./planner-use-cases.js";
 import type {
   AgentRunner,
+  AgentRunArtifactReader,
   AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
@@ -44,6 +47,7 @@ export interface PlannerCliServices {
   readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
   readonly contextFileReader?: ContextFileReader;
+  readonly runArtifactReader?: AgentRunArtifactReader;
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly agentRunner?: AgentRunner;
   readonly validationCommandRunner?: ValidationCommandRunner;
@@ -280,6 +284,44 @@ export async function runPlannerCli(
   }
 
   if (command === "run") {
+    if (rest[0] === "review" || rest[0] === "accept" || rest[0] === "reject") {
+      if (!services.runArtifactReader) {
+        return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires an agent run artifact reader\n` };
+      }
+
+      const runId = rest[1];
+      if (!runId || runId.startsWith("--")) {
+        return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires <run-id>\n` };
+      }
+
+      try {
+        if (rest[0] === "review") {
+          const result = await reviewAgentRunUseCase({
+            graphRepository: services.graphRepository,
+            runArtifactReader: services.runArtifactReader,
+            runId
+          });
+          return render(0, result, json);
+        }
+
+        if (!services.changeLogWriter) {
+          return { exitCode: 1, stdout: "", stderr: `planner run ${rest[0]} requires a planning change log writer\n` };
+        }
+
+        const result = await decideAgentRunUseCase({
+          graphRepository: services.graphRepository,
+          runArtifactReader: services.runArtifactReader,
+          changeLogWriter: services.changeLogWriter,
+          runId,
+          decision: rest[0] === "accept" ? "accepted" : "rejected",
+          timestamp: services.currentTimestamp?.()
+        });
+        return render(0, result, json);
+      } catch (error) {
+        return renderError(error, json);
+      }
+    }
+
     if (!services.contextFileReader) {
       return { exitCode: 1, stdout: "", stderr: "planner run requires a context file reader\n" };
     }
