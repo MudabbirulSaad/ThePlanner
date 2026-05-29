@@ -33,6 +33,7 @@ import type {
   RefinedBriefReader,
   RefinedBriefWriter,
   ValidationCommandRunner,
+  SupportedAgent,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
 
@@ -51,6 +52,8 @@ export interface PlannerCliServices {
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly agentRunner?: AgentRunner;
   readonly validationCommandRunner?: ValidationCommandRunner;
+  readonly defaultAgent?: SupportedAgent;
+  readonly defaultValidationCommands?: readonly string[];
   readonly currentTimestamp?: () => string;
 }
 
@@ -248,7 +251,7 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner prepare requires <work-item-id>\n" };
     }
 
-    const agent = readOption(rest, "--agent");
+    const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
       return { exitCode: 1, stdout: "", stderr: "planner prepare requires --agent <codex|claude|gemini>\n" };
     }
@@ -270,6 +273,7 @@ export async function runPlannerCli(
         runArtifactWriter: services.runArtifactWriter,
         workItemId,
         agent,
+        defaultValidationCommands: services.defaultValidationCommands,
         apply,
         timestamp: services.currentTimestamp?.()
       });
@@ -343,7 +347,7 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner run requires <work-item-id>\n" };
     }
 
-    const agent = readOption(rest, "--agent");
+    const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
       return { exitCode: 1, stdout: "", stderr: "planner run requires --agent <codex|claude|gemini>\n" };
     }
@@ -357,6 +361,7 @@ export async function runPlannerCli(
         validationCommandRunner: services.validationCommandRunner,
         workItemId,
         agent,
+        defaultValidationCommands: services.defaultValidationCommands,
         timestamp: services.currentTimestamp?.()
       });
       return render(result.status === "completed" ? 0 : 1, result, json);

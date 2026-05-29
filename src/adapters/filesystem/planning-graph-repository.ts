@@ -53,10 +53,13 @@ export class FilePlanningGraphRepository implements GraphRepository {
 }
 
 export class FileProjectionWriter implements ProjectionWriter {
+  public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
+
   public async writeAll(projections: readonly RenderedProjection[]): Promise<readonly string[]> {
     const writtenPaths: string[] = [];
     for (const projection of projections) {
-      const resolvedPath = await resolveProjectionPath(projection.path);
+      const requestedPath = this.mapPath(projection.path);
+      const resolvedPath = await resolveProjectionPath(requestedPath);
       const absolutePath = resolve(resolvedPath);
       await mkdir(dirname(absolutePath), { recursive: true });
       await writeFile(absolutePath, projection.content, "utf8");
@@ -67,10 +70,12 @@ export class FileProjectionWriter implements ProjectionWriter {
 }
 
 export class FileProjectionReader implements ProjectionReader {
+  public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
+
   public async readMany(paths: readonly string[]) {
     const projections = await Promise.all(
       paths.map(async (path) => {
-        const resolvedPath = await resolveProjectionPath(path);
+        const resolvedPath = await resolveProjectionPath(this.mapPath(path));
         return {
           path: resolvedPath,
           content: await readFile(resolve(resolvedPath), "utf8")
@@ -83,7 +88,7 @@ export class FileProjectionReader implements ProjectionReader {
   public async readExistingMany(paths: readonly string[]) {
     const projections = await Promise.all(
       paths.map(async (path) => {
-        const resolvedPath = await resolveProjectionPath(path);
+        const resolvedPath = await resolveProjectionPath(this.mapPath(path));
         try {
           return {
             requestedPath: path,
@@ -116,13 +121,16 @@ export class FileChangeLogWriter implements ChangeLogWriter {
 }
 
 export class FileAgentRunArtifactWriter implements AgentRunArtifactWriter {
+  public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
+
   public async writeAll(files: readonly AgentRunArtifactFile[]): Promise<readonly string[]> {
     const writtenPaths: string[] = [];
     for (const file of files) {
-      const resolvedPath = resolve(file.path);
+      const mappedPath = this.mapPath(file.path);
+      const resolvedPath = resolve(mappedPath);
       await mkdir(dirname(resolvedPath), { recursive: true });
       await writeFile(resolvedPath, file.content, { encoding: "utf8", flag: "wx" });
-      writtenPaths.push(file.path);
+      writtenPaths.push(mappedPath);
     }
 
     return writtenPaths;
@@ -130,12 +138,15 @@ export class FileAgentRunArtifactWriter implements AgentRunArtifactWriter {
 }
 
 export class FileAgentRunArtifactReader implements AgentRunArtifactReader {
+  public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
+
   public async read(path: string): Promise<string> {
+    const mappedPath = this.mapPath(path);
     try {
-      return await readFile(resolve(path), "utf8");
+      return await readFile(resolve(mappedPath), "utf8");
     } catch (error) {
       if (isNotFound(error)) {
-        throw new Error(`Agent run artifact not found: ${path}`);
+        throw new Error(`Agent run artifact not found: ${mappedPath}`);
       }
       throw error;
     }
@@ -217,13 +228,15 @@ export class FileRefinedBriefWriter implements RefinedBriefWriter {
 }
 
 export class FileWorkspaceInitializer implements WorkspaceInitializer {
+  public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
+
   public async ensureDirectory(path: string): Promise<WorkspaceEntryStatus> {
-    const createdPath = await mkdir(resolve(path), { recursive: true });
+    const createdPath = await mkdir(resolve(this.mapPath(path)), { recursive: true });
     return createdPath ? "created" : "existing";
   }
 
   public async writeFileIfMissing(path: string, content: string): Promise<WorkspaceEntryStatus> {
-    const resolvedPath = resolve(path);
+    const resolvedPath = resolve(this.mapPath(path));
     await mkdir(dirname(resolvedPath), { recursive: true });
 
     try {
@@ -236,6 +249,10 @@ export class FileWorkspaceInitializer implements WorkspaceInitializer {
       throw error;
     }
   }
+}
+
+function identityPath(path: string): string {
+  return path;
 }
 
 async function resolveProjectionPath(path: string): Promise<string> {

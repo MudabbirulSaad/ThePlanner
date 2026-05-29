@@ -157,11 +157,19 @@ async function runProcessAgent(args: {
   return result;
 }
 
-export function createLocalAgentRunner(commandOverride?: string): AgentRunner {
+export interface LocalAgentRunnerOptions {
+  readonly commandOverride?: string;
+  readonly commands?: Partial<Record<SupportedAgent, string>>;
+}
+
+export function createLocalAgentRunner(options?: string | LocalAgentRunnerOptions): AgentRunner {
+  const commandOverride = typeof options === "string" ? options : options?.commandOverride;
+  const commands = typeof options === "string" ? undefined : options?.commands;
+
   return new AgentRunnerRegistry({
-    codex: new CodexProcessRunner(commandOverride),
-    claude: new ClaudeProcessRunner(commandOverride),
-    gemini: new GeminiProcessRunner(commandOverride)
+    codex: new CodexProcessRunner(commandOverride ?? commands?.codex),
+    claude: new ClaudeProcessRunner(commandOverride ?? commands?.claude),
+    gemini: new GeminiProcessRunner(commandOverride ?? commands?.gemini)
   });
 }
 

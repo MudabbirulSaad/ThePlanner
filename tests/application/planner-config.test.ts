@@ -1,0 +1,44 @@
+import { describe, expect, it } from "vitest";
+
+import { defaultPlannerConfig, parsePlannerConfig } from "../../src/application/index.js";
+
+describe("planner config", () => {
+  it("uses deterministic defaults when no config file is present", () => {
+    expect(parsePlannerConfig(undefined)).toEqual(defaultPlannerConfig);
+  });
+
+  it("merges project config with defaults", () => {
+    expect(
+      parsePlannerConfig({
+        planningDirectory: "project-planning",
+        defaultAgent: "claude",
+        agentCommands: {
+          claude: "/opt/claude",
+          gemini: "npx gemini"
+        },
+        validationCommands: ["npm test", "npm run lint"]
+      })
+    ).toEqual({
+      planningDirectory: "project-planning",
+      defaultAgent: "claude",
+      agentCommands: {
+        codex: "codex exec -",
+        claude: "/opt/claude",
+        gemini: "npx gemini"
+      },
+      validationCommands: ["npm test", "npm run lint"]
+    });
+  });
+
+  it("rejects invalid config with useful field-level errors", () => {
+    expect(() => parsePlannerConfig({ planningDirectory: "../outside" })).toThrow(
+      'planner.config.json.planningDirectory must be a non-empty relative path without "." or ".." segments.'
+    );
+    expect(() => parsePlannerConfig({ defaultAgent: "unknown" })).toThrow(
+      "planner.config.json.defaultAgent must be one of: codex, claude, gemini."
+    );
+    expect(() => parsePlannerConfig({ validationCommands: [""] })).toThrow(
+      "planner.config.json.validationCommands must not contain empty commands."
+    );
+  });
+});

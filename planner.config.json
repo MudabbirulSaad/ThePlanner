@@ -1,0 +1,10 @@
+{
+  "planningDirectory": "planning",
+  "defaultAgent": "codex",
+  "agentCommands": {
+    "codex": "codex exec -",
+    "claude": "claude",
+    "gemini": "gemini"
+  },
+  "validationCommands": []
+}

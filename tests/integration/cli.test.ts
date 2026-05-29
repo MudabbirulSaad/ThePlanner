@@ -64,6 +64,70 @@ describe("planner CLI use case wiring", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ graphVersion: 1, status: "pass" });
   });
 
+  it("uses configured default agent and validation command defaults", async () => {
+    const graphWithoutValidation = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Run Default Agent",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible", "afk_ready"], reasons: [] },
+            acceptance_criteria: ["Done"],
+            validation_methods: []
+          }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
+    });
+    const runner: AgentRunner = {
+      run: async (input) => ({
+        command: [input.agent],
+        exitCode: 0,
+        stdout: "",
+        stderr: ""
+      })
+    };
+    const validationInputs: string[] = [];
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => {
+        validationInputs.push(input.command);
+        return { command: input.command, exitCode: 0, stdout: "", stderr: "" };
+      }
+    };
+
+    const result = await runPlannerCli(["run", "wi-001", "--json"], {
+      graphRepository: { load: async () => graphWithoutValidation },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      defaultAgent: "claude",
+      defaultValidationCommands: ["npm run check"],
+      currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      agent: "claude",
+      runner: { command: ["claude"], exitCode: 0 },
+      validation: { commands: [{ command: "npm run check", exitCode: 0 }] }
+    });
+    expect(validationInputs).toEqual(["npm run check"]);
+  });
+
   it("runs runtime JSON Schema validation before semantic validation", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-schema-pass-"));

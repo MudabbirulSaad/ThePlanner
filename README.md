@@ -26,7 +26,36 @@ npm install
 npm run build
 ```
 
-The local binary is declared as `planner` and builds to `dist/src/adapters/cli/index.js`.
+The local binary is declared as `planner` and builds to `dist/src/adapters/cli/index.js`. During development, run it through npm's package bin workflow:
+
+```sh
+npm exec planner -- status --json
+npm exec planner -- validate --json
+```
+
+For a global local install without publishing to npm:
+
+```sh
+npm install --global .
+planner status --json
+```
+
+Project defaults are read from `planner.config.json` when present. The default config preserves the repository layout:
+
+```json
+{
+  "planningDirectory": "planning",
+  "defaultAgent": "codex",
+  "agentCommands": {
+    "codex": "codex exec -",
+    "claude": "claude",
+    "gemini": "gemini"
+  },
+  "validationCommands": []
+}
+```
+
+Use `--config <file>` to load a different config file. `planningDirectory` remaps planner-owned `planning/` paths, `defaultAgent` is used when `prepare` or `run` omits `--agent`, `agentCommands` configures local agent binaries, and `validationCommands` are fallback commands for Work Items without command validation methods.
 
 ## Scripts
 
@@ -40,28 +69,28 @@ The local binary is declared as `planner` and builds to `dist/src/adapters/cli/i
 
 ## CLI Commands
 
-Use the built CLI directly during development:
+Use the package binary during development:
 
 ```sh
-node dist/src/adapters/cli/index.js init --json
-node dist/src/adapters/cli/index.js status --json
-node dist/src/adapters/cli/index.js validate --json
-node dist/src/adapters/cli/index.js export --dry-run --json
-node dist/src/adapters/cli/index.js export --apply --json
-node dist/src/adapters/cli/index.js intake questions --from planning/intake/idea.md --json
-node dist/src/adapters/cli/index.js intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
-node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --dry-run --json
-node dist/src/adapters/cli/index.js plan --from planning/intake/refined-brief.md --apply --json
-node dist/src/adapters/cli/index.js reconcile --json
-node dist/src/adapters/cli/index.js reconcile --apply --json
-node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --dry-run --json
-node dist/src/adapters/cli/index.js prepare wi-001 --agent codex --apply --json
-node dist/src/adapters/cli/index.js run wi-001 --agent codex --json
-node dist/src/adapters/cli/index.js run wi-001 --agent claude --json
-node dist/src/adapters/cli/index.js run wi-001 --agent gemini --json
-node dist/src/adapters/cli/index.js run review run-YYYYMMDD-HHMMSS-wi-001 --json
-node dist/src/adapters/cli/index.js run accept run-YYYYMMDD-HHMMSS-wi-001 --json
-node dist/src/adapters/cli/index.js run reject run-YYYYMMDD-HHMMSS-wi-001 --json
+npm exec planner -- init --json
+npm exec planner -- status --json
+npm exec planner -- validate --json
+npm exec planner -- export --dry-run --json
+npm exec planner -- export --apply --json
+npm exec planner -- intake questions --from planning/intake/idea.md --json
+npm exec planner -- intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
+npm exec planner -- plan --from planning/intake/refined-brief.md --dry-run --json
+npm exec planner -- plan --from planning/intake/refined-brief.md --apply --json
+npm exec planner -- reconcile --json
+npm exec planner -- reconcile --apply --json
+npm exec planner -- prepare wi-001 --agent codex --dry-run --json
+npm exec planner -- prepare wi-001 --agent codex --apply --json
+npm exec planner -- run wi-001 --agent codex --json
+npm exec planner -- run wi-001 --agent claude --json
+npm exec planner -- run wi-001 --agent gemini --json
+npm exec planner -- run review run-YYYYMMDD-HHMMSS-wi-001 --json
+npm exec planner -- run accept run-YYYYMMDD-HHMMSS-wi-001 --json
+npm exec planner -- run reject run-YYYYMMDD-HHMMSS-wi-001 --json
 ```
 
 Command behavior:
@@ -105,9 +134,9 @@ For a concise walkthrough, see [docs/demo.md](docs/demo.md).
 
 ```sh
 npm run build
-node dist/src/adapters/cli/index.js status --json
-node dist/src/adapters/cli/index.js validate --json
-node dist/src/adapters/cli/index.js reconcile --json
+npm exec planner -- status --json
+npm exec planner -- validate --json
+npm exec planner -- reconcile --json
 npm run check
 ```
 
@@ -115,9 +144,9 @@ The repository root now starts with a minimal starter `planning/graph.json`. The
 
 ```sh
 cd examples/ai-engineering-planner-v1
-node ../../dist/src/adapters/cli/index.js status --json
-node ../../dist/src/adapters/cli/index.js validate --json
-node ../../dist/src/adapters/cli/index.js reconcile --json
+npm exec --prefix ../.. planner -- status --json
+npm exec --prefix ../.. planner -- validate --json
+npm exec --prefix ../.. planner -- reconcile --json
 ```
 
 If `reconcile --json` returns `proposedPatches`, review them before using `--apply`. `unsupportedProjectionEdits` are richer Markdown fields or sections that V1 preserves as manual intent but does not ingest as canonical graph truth. They are not failures by themselves.

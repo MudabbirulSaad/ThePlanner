@@ -740,6 +740,7 @@ export async function prepareAgentContextBundleUseCase(args: {
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly workItemId: string;
   readonly agent: string;
+  readonly defaultValidationCommands?: readonly string[];
   readonly apply?: boolean;
   readonly timestamp?: string;
 }): Promise<AgentContextBundleResult> {
@@ -759,7 +760,7 @@ export async function prepareAgentContextBundleUseCase(args: {
   }
 
   const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
-  const validationCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
+  const validationCommands = validationCommandsForWorkItem(workItem, args.defaultValidationCommands);
   const content = renderAgentContextBundle({
     agent,
     mode: "prepare",
@@ -849,6 +850,7 @@ export async function runAgentUseCase(args: {
   readonly validationCommandRunner: ValidationCommandRunner;
   readonly workItemId: string;
   readonly agent: string;
+  readonly defaultValidationCommands?: readonly string[];
   readonly timestamp?: string;
 }): Promise<AgentExecutionResult> {
   const agent = parseRunnableAgent(args.agent);
@@ -867,7 +869,7 @@ export async function runAgentUseCase(args: {
   }
 
   const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
-  const validationCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
+  const validationCommands = validationCommandsForWorkItem(workItem, args.defaultValidationCommands);
   const prompt = renderAgentContextBundle({
     agent,
     mode: "run",
@@ -892,6 +894,7 @@ export async function runAgentUseCase(args: {
   const executableValidationCommands = workItem.validationMethods
     .map((method) => method.command)
     .filter((command): command is string => Boolean(command));
+  const commandsToRun = executableValidationCommands.length > 0 ? executableValidationCommands : (args.defaultValidationCommands ?? []);
   const emptyValidation: AgentRunValidationSummary = { status: "pass", commands: [] };
   const metadata: AgentExecutionRunMetadata = {
     runId,
@@ -912,7 +915,7 @@ export async function runAgentUseCase(args: {
   });
 
   const validationResults: ValidationCommandResult[] = [];
-  for (const command of executableValidationCommands) {
+  for (const command of commandsToRun) {
     validationResults.push(
       await args.validationCommandRunner.run({
         command,
@@ -1433,6 +1436,14 @@ function agentDisplayName(agent: SupportedAgent): string {
     claude: "Claude Code",
     gemini: "Gemini CLI"
   }[agent];
+}
+
+function validationCommandsForWorkItem(
+  workItem: WorkItemNode,
+  defaultValidationCommands: readonly string[] | undefined
+): readonly string[] {
+  const workItemCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
+  return workItemCommands.length > 0 ? workItemCommands : (defaultValidationCommands ?? []);
 }
 
 function fence(language: string, content: string): string {

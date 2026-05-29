@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runPlannerCli } from "../../application/index.js";
+import type { PlannerConfig } from "../../application/index.js";
 import {
   FileAgentRunArtifactReader,
   FileAgentRunArtifactWriter,
@@ -13,27 +14,44 @@ import {
   FileRefinedBriefWriter,
   FileWorkspaceInitializer,
   FilePlanningGraphSchemaValidator,
+  createPlanningPathMapper,
   createLocalAgentRunner,
+  loadFilePlannerConfig,
   ProcessValidationCommandRunner
 } from "../index.js";
 
-const runnerCommand = readOption(process.argv.slice(2), "--runner-command");
+const args = process.argv.slice(2);
+const runnerCommand = readOption(args, "--runner-command");
+const configPath = readOption(args, "--config") ?? "planner.config.json";
+let config: PlannerConfig;
 
-const result = await runPlannerCli(process.argv.slice(2), {
-  graphRepository: new FilePlanningGraphRepository(),
-  graphSchemaValidator: new FilePlanningGraphSchemaValidator(),
-  projectionWriter: new FileProjectionWriter(),
-  projectionReader: new FileProjectionReader(),
-  changeLogWriter: new FileChangeLogWriter(),
-  workspaceInitializer: new FileWorkspaceInitializer(),
+try {
+  config = await loadFilePlannerConfig(configPath);
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+  process.exit();
+}
+
+const mapPlanningPath = createPlanningPathMapper(config.planningDirectory);
+
+const result = await runPlannerCli(args, {
+  graphRepository: new FilePlanningGraphRepository(`${config.planningDirectory}/graph.json`),
+  graphSchemaValidator: new FilePlanningGraphSchemaValidator(`${config.planningDirectory}/graph.schema.json`),
+  projectionWriter: new FileProjectionWriter(mapPlanningPath),
+  projectionReader: new FileProjectionReader(mapPlanningPath),
+  changeLogWriter: new FileChangeLogWriter(`${config.planningDirectory}/change-log.ndjson`),
+  workspaceInitializer: new FileWorkspaceInitializer(mapPlanningPath),
   intakeIdeaReader: new FileIntakeIdeaReader(),
   refinedBriefReader: new FileRefinedBriefReader(),
   refinedBriefWriter: new FileRefinedBriefWriter(),
   contextFileReader: new FileContextReader(),
-  runArtifactReader: new FileAgentRunArtifactReader(),
-  runArtifactWriter: new FileAgentRunArtifactWriter(),
-  agentRunner: createLocalAgentRunner(runnerCommand),
-  validationCommandRunner: new ProcessValidationCommandRunner()
+  runArtifactReader: new FileAgentRunArtifactReader(mapPlanningPath),
+  runArtifactWriter: new FileAgentRunArtifactWriter(mapPlanningPath),
+  agentRunner: createLocalAgentRunner({ commandOverride: runnerCommand, commands: config.agentCommands }),
+  validationCommandRunner: new ProcessValidationCommandRunner(),
+  defaultAgent: config.defaultAgent,
+  defaultValidationCommands: config.validationCommands
 });
 
 if (result.stdout) {

@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "description": "CLI-first AI Engineering Planner for canonical Planning Graph artifacts.",
   "type": "module",
+  "files": [
+    "dist/src",
+    "README.md",
+    "planner.config.json",
+    "planning/graph.json",
+    "planning/graph.schema.json"
+  ],
   "bin": {
     "planner": "dist/src/adapters/cli/index.js"
   },
