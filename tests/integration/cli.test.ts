@@ -22,7 +22,7 @@ import {
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
-import type { AgentRunner } from "../../src/application/index.js";
+import type { AgentRunner, ValidationCommandRunner } from "../../src/application/index.js";
 import type { PlanningGraph } from "../../src/core/index.js";
 
 const graph = parsePlanningGraphJson({
@@ -791,6 +791,14 @@ describe("planner CLI use case wiring", () => {
         stderr: ""
       })
     };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 0,
+        stdout: "validation ok\n",
+        stderr: ""
+      })
+    };
 
     const result = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
       graphRepository: { load: async () => graph },
@@ -798,6 +806,7 @@ describe("planner CLI use case wiring", () => {
       contextFileReader: { readIfExists: async () => undefined },
       runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
       agentRunner: runner,
+      validationCommandRunner: validationRunner,
       currentTimestamp: () => "2026-05-29T12:34:56.000Z"
     });
 
@@ -811,12 +820,18 @@ describe("planner CLI use case wiring", () => {
         command: ["codex"],
         exitCode: 0
       },
+      validation: {
+        status: "pass",
+        commands: [{ command: "npm test", exitCode: 0 }]
+      },
       artifactPaths: [
         "planning/runs/run-20260529-123456-wi-001/metadata.json",
         "planning/runs/run-20260529-123456-wi-001/prompt.md",
         "planning/runs/run-20260529-123456-wi-001/context.md",
         "planning/runs/run-20260529-123456-wi-001/runner-stdout.log",
         "planning/runs/run-20260529-123456-wi-001/runner-stderr.log",
+        "planning/runs/run-20260529-123456-wi-001/validation-stdout.log",
+        "planning/runs/run-20260529-123456-wi-001/validation-stderr.log",
         "planning/runs/run-20260529-123456-wi-001/result.json"
       ]
     });
@@ -835,6 +850,14 @@ describe("planner CLI use case wiring", () => {
         }
       })
     };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 0,
+        stdout: "",
+        stderr: ""
+      })
+    };
 
     const result = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
       graphRepository: { load: async () => graph },
@@ -842,6 +865,7 @@ describe("planner CLI use case wiring", () => {
       contextFileReader: { readIfExists: async () => undefined },
       runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
       agentRunner: runner,
+      validationCommandRunner: validationRunner,
       currentTimestamp: () => "2026-05-29T12:34:56.000Z"
     });
 
@@ -855,6 +879,49 @@ describe("planner CLI use case wiring", () => {
           code: "runner_not_found",
           message: "Codex runner command not found: codex"
         }
+      },
+      validation: {
+        status: "pass"
+      }
+    });
+  });
+
+  it("returns non-zero JSON when post-agent validation fails", async () => {
+    const runner: AgentRunner = {
+      run: async () => ({
+        command: ["codex"],
+        exitCode: 0,
+        stdout: "agent ok\n",
+        stderr: ""
+      })
+    };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 1,
+        stdout: "validation failed\n",
+        stderr: "test failure\n"
+      })
+    };
+
+    const result = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: { writeAll: async (files) => files.map((file) => file.path) },
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "failed",
+      runner: { exitCode: 0 },
+      validation: {
+        status: "fail",
+        commands: [{ command: "npm test", exitCode: 1 }]
       }
     });
   });

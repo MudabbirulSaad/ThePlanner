@@ -160,6 +160,34 @@ export interface AgentRunner {
   readonly run: (input: AgentRunnerInput) => Promise<AgentRunnerResult>;
 }
 
+export interface ValidationCommandRunnerInput {
+  readonly command: string;
+  readonly workItemId: string;
+  readonly runId: string;
+  readonly runDirectory: string;
+}
+
+export interface ValidationCommandResult {
+  readonly command: string;
+  readonly exitCode: number;
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly error?: AgentRunnerError;
+}
+
+export interface ValidationCommandRunner {
+  readonly run: (input: ValidationCommandRunnerInput) => Promise<ValidationCommandResult>;
+}
+
+export interface AgentRunValidationSummary {
+  readonly status: "pass" | "fail";
+  readonly commands: readonly {
+    readonly command: string;
+    readonly exitCode: number;
+    readonly error?: AgentRunnerError;
+  }[];
+}
+
 export interface AgentContextBundleSection {
   readonly path: string;
   readonly source: "workspace" | "generated";
@@ -198,6 +226,7 @@ export interface AgentRunMetadata {
 
 export interface AgentExecutionRunMetadata extends AgentRunMetadata {
   readonly agent: RunnableAgent;
+  readonly validation: AgentRunValidationSummary;
 }
 
 export interface AgentExecutionResult {
@@ -215,6 +244,7 @@ export interface AgentExecutionResult {
     readonly reasons: readonly string[];
   };
   readonly validationCommands: readonly string[];
+  readonly validation: AgentRunValidationSummary;
   readonly runner: {
     readonly command: readonly string[];
     readonly exitCode: number;
@@ -782,6 +812,7 @@ export async function runAgentUseCase(args: {
   readonly contextFileReader: ContextFileReader;
   readonly runArtifactWriter: AgentRunArtifactWriter;
   readonly agentRunner: AgentRunner;
+  readonly validationCommandRunner: ValidationCommandRunner;
   readonly workItemId: string;
   readonly agent: string;
   readonly timestamp?: string;
@@ -822,13 +853,20 @@ export async function runAgentUseCase(args: {
   const stdoutPath = `${runDirectory}/runner-stdout.log`;
   const stderrPath = `${runDirectory}/runner-stderr.log`;
   const resultPath = `${runDirectory}/result.json`;
+  const validationStdoutPath = `${runDirectory}/validation-stdout.log`;
+  const validationStderrPath = `${runDirectory}/validation-stderr.log`;
+  const executableValidationCommands = workItem.validationMethods
+    .map((method) => method.command)
+    .filter((command): command is string => Boolean(command));
+  const emptyValidation: AgentRunValidationSummary = { status: "pass", commands: [] };
   const metadata: AgentExecutionRunMetadata = {
     runId,
     workItemId: workItem.id,
     graphVersion: graph.graphVersion,
     agent,
     generatedAt,
-    validationCommands
+    validationCommands,
+    validation: emptyValidation
   };
 
   const runnerResult = await args.agentRunner.run({
@@ -839,7 +877,31 @@ export async function runAgentUseCase(args: {
     runDirectory
   });
 
-  const status = runnerResult.exitCode === 0 && !runnerResult.error ? "completed" : "failed";
+  const validationResults: ValidationCommandResult[] = [];
+  for (const command of executableValidationCommands) {
+    validationResults.push(
+      await args.validationCommandRunner.run({
+        command,
+        workItemId: workItem.id,
+        runId,
+        runDirectory
+      })
+    );
+  }
+  const validationSummary: AgentRunValidationSummary = {
+    status: validationResults.every((result) => result.exitCode === 0 && !result.error) ? "pass" : "fail",
+    commands: validationResults.map((result) => ({
+      command: result.command,
+      exitCode: result.exitCode,
+      ...(result.error ? { error: result.error } : {})
+    }))
+  };
+  const metadataWithValidation: AgentExecutionRunMetadata = {
+    ...metadata,
+    validation: validationSummary
+  };
+  const status =
+    runnerResult.exitCode === 0 && !runnerResult.error && validationSummary.status === "pass" ? "completed" : "failed";
   const result: AgentExecutionResult = {
     status,
     agent,
@@ -847,14 +909,33 @@ export async function runAgentUseCase(args: {
     runId,
     runDirectory,
     bundlePath: promptPath,
-    artifactPaths: [metadataPath, promptPath, contextPath, stdoutPath, stderrPath, resultPath],
-    createdPaths: [metadataPath, promptPath, contextPath, stdoutPath, stderrPath, resultPath],
-    metadata,
+    artifactPaths: [
+      metadataPath,
+      promptPath,
+      contextPath,
+      stdoutPath,
+      stderrPath,
+      validationStdoutPath,
+      validationStderrPath,
+      resultPath
+    ],
+    createdPaths: [
+      metadataPath,
+      promptPath,
+      contextPath,
+      stdoutPath,
+      stderrPath,
+      validationStdoutPath,
+      validationStderrPath,
+      resultPath
+    ],
+    metadata: metadataWithValidation,
     readiness: {
       labels: readiness.labels,
       reasons: readiness.reasons
     },
     validationCommands,
+    validation: validationSummary,
     runner: {
       command: runnerResult.command,
       exitCode: runnerResult.exitCode,
@@ -862,16 +943,18 @@ export async function runAgentUseCase(args: {
     },
     message:
       status === "completed"
-        ? `Agent run completed and artifacts were written to ${runDirectory}.`
-        : `Agent run failed with exit code ${runnerResult.exitCode}; artifacts were written to ${runDirectory}.`
+        ? `Agent run completed, validation passed, and artifacts were written to ${runDirectory}.`
+        : `Agent run failed or validation did not pass; artifacts were written to ${runDirectory}.`
   };
 
   const files: readonly AgentRunArtifactFile[] = [
-    { path: metadataPath, content: `${JSON.stringify(metadata, null, 2)}\n` },
+    { path: metadataPath, content: `${JSON.stringify(metadataWithValidation, null, 2)}\n` },
     { path: promptPath, content: prompt },
     { path: contextPath, content: renderAgentContextMarkdown(context) },
     { path: stdoutPath, content: runnerResult.stdout },
     { path: stderrPath, content: runnerResult.stderr },
+    { path: validationStdoutPath, content: validationResults.map((result) => result.stdout).join("") },
+    { path: validationStderrPath, content: validationResults.map((result) => result.stderr).join("") },
     { path: resultPath, content: `${JSON.stringify(result, null, 2)}\n` }
   ];
   const writtenPaths = await args.runArtifactWriter.writeAll(files);

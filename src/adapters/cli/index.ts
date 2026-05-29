@@ -12,7 +12,8 @@ import {
   FileRefinedBriefWriter,
   FileWorkspaceInitializer,
   FilePlanningGraphSchemaValidator,
-  CodexProcessRunner
+  CodexProcessRunner,
+  ProcessValidationCommandRunner
 } from "../index.js";
 
 const runnerCommand = readOption(process.argv.slice(2), "--runner-command");
@@ -29,7 +30,8 @@ const result = await runPlannerCli(process.argv.slice(2), {
   refinedBriefWriter: new FileRefinedBriefWriter(),
   contextFileReader: new FileContextReader(),
   runArtifactWriter: new FileAgentRunArtifactWriter(),
-  agentRunner: new CodexProcessRunner(runnerCommand)
+  agentRunner: new CodexProcessRunner(runnerCommand),
+  validationCommandRunner: new ProcessValidationCommandRunner()
 });
 
 if (result.stdout) {

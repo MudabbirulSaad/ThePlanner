@@ -29,6 +29,7 @@ import type {
   ProjectionWriter,
   RefinedBriefReader,
   RefinedBriefWriter,
+  ValidationCommandRunner,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
 
@@ -45,6 +46,7 @@ export interface PlannerCliServices {
   readonly contextFileReader?: ContextFileReader;
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly agentRunner?: AgentRunner;
+  readonly validationCommandRunner?: ValidationCommandRunner;
   readonly currentTimestamp?: () => string;
 }
 
@@ -290,6 +292,10 @@ export async function runPlannerCli(
       return { exitCode: 1, stdout: "", stderr: "planner run requires an agent runner\n" };
     }
 
+    if (!services.validationCommandRunner) {
+      return { exitCode: 1, stdout: "", stderr: "planner run requires a validation command runner\n" };
+    }
+
     const workItemId = rest[0];
     if (!workItemId || workItemId.startsWith("--")) {
       return { exitCode: 1, stdout: "", stderr: "planner run requires <work-item-id>\n" };
@@ -306,6 +312,7 @@ export async function runPlannerCli(
         contextFileReader: services.contextFileReader,
         runArtifactWriter: services.runArtifactWriter,
         agentRunner: services.agentRunner,
+        validationCommandRunner: services.validationCommandRunner,
         workItemId,
         agent,
         timestamp: services.currentTimestamp?.()

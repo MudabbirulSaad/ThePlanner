@@ -6,7 +6,10 @@ import type {
   AgentRunArtifactWriter,
   AgentRunner,
   AgentRunnerInput,
-  AgentRunnerResult
+  AgentRunnerResult,
+  ValidationCommandResult,
+  ValidationCommandRunner,
+  ValidationCommandRunnerInput
 } from "../../src/application/index.js";
 
 class FakeArtifactWriter implements AgentRunArtifactWriter {
@@ -29,6 +32,21 @@ class FakeRunner implements AgentRunner {
   public async run(input: AgentRunnerInput): Promise<AgentRunnerResult> {
     this.input = input;
     return this.result;
+  }
+}
+
+class FakeValidationRunner implements ValidationCommandRunner {
+  public readonly inputs: ValidationCommandRunnerInput[] = [];
+
+  public constructor(private readonly results: readonly ValidationCommandResult[]) {}
+
+  public async run(input: ValidationCommandRunnerInput): Promise<ValidationCommandResult> {
+    this.inputs.push(input);
+    const result = this.results[this.inputs.length - 1];
+    if (!result) {
+      throw new Error(`Unexpected validation command: ${input.command}`);
+    }
+    return result;
   }
 }
 
@@ -68,12 +86,16 @@ describe("run agent use case", () => {
       stdout: "ok\n",
       stderr: ""
     });
+    const validationRunner = new FakeValidationRunner([
+      { command: "npm test", exitCode: 0, stdout: "tests passed\n", stderr: "" }
+    ]);
 
     const result = await runAgentUseCase({
       graphRepository: { load: async () => graph },
       contextFileReader: { readIfExists: async () => "# Instructions\n" },
       runArtifactWriter: writer,
       agentRunner: runner,
+      validationCommandRunner: validationRunner,
       workItemId: "wi-001",
       agent: "codex",
       timestamp: "2026-05-29T12:34:56.000Z"
@@ -85,17 +107,67 @@ describe("run agent use case", () => {
       workItemId: "wi-001",
       runId: "run-20260529-123456-wi-001",
       runDirectory: "planning/runs/run-20260529-123456-wi-001",
-      runner: { command: ["codex"], exitCode: 0 }
+      runner: { command: ["codex"], exitCode: 0 },
+      validation: { status: "pass", commands: [{ command: "npm test", exitCode: 0 }] }
     });
+    expect(validationRunner.inputs).toEqual([
+      {
+        command: "npm test",
+        workItemId: "wi-001",
+        runId: "run-20260529-123456-wi-001",
+        runDirectory: "planning/runs/run-20260529-123456-wi-001"
+      }
+    ]);
     expect(runner.input?.prompt).toContain("# Agent Context Bundle");
     expect(runner.input?.prompt).toContain("## Run Instructions");
     expect(runner.input?.prompt).toContain("Work Item: wi-001 - Run Codex");
     expect(runner.input?.prompt).not.toContain("Do not execute an autonomous agent from planner prepare.");
     expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/prompt.md")).toContain("# Agent Context Bundle");
     expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/runner-stdout.log")).toBe("ok\n");
+    expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/validation-stdout.log")).toBe("tests passed\n");
+    expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/metadata.json") ?? "{}")).toMatchObject({
+      validation: { status: "pass", commands: [{ command: "npm test", exitCode: 0 }] }
+    });
     expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}")).toMatchObject({
       status: "completed",
-      runner: { exitCode: 0 }
+      runner: { exitCode: 0 },
+      validation: { status: "pass" }
+    });
+  });
+
+  it("persists failed validation output and returns a failed result", async () => {
+    const writer = new FakeArtifactWriter();
+    const runner = new FakeRunner({
+      command: ["codex"],
+      exitCode: 0,
+      stdout: "ok\n",
+      stderr: ""
+    });
+    const validationRunner = new FakeValidationRunner([
+      { command: "npm test", exitCode: 1, stdout: "one failed\n", stderr: "failure details\n" }
+    ]);
+
+    const result = await runAgentUseCase({
+      graphRepository: { load: async () => graph },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: writer,
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      workItemId: "wi-001",
+      agent: "codex",
+      timestamp: "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result).toMatchObject({
+      status: "failed",
+      runner: { exitCode: 0 },
+      validation: { status: "fail", commands: [{ command: "npm test", exitCode: 1 }] }
+    });
+    expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/validation-stdout.log")).toBe("one failed\n");
+    expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/validation-stderr.log")).toBe("failure details\n");
+    expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}")).toMatchObject({
+      status: "failed",
+      validation: { status: "fail", commands: [{ command: "npm test", exitCode: 1 }] }
     });
   });
 
@@ -111,12 +183,16 @@ describe("run agent use case", () => {
         message: "Codex runner command not found: codex"
       }
     });
+    const validationRunner = new FakeValidationRunner([
+      { command: "npm test", exitCode: 0, stdout: "tests passed\n", stderr: "" }
+    ]);
 
     const result = await runAgentUseCase({
       graphRepository: { load: async () => graph },
       contextFileReader: { readIfExists: async () => undefined },
       runArtifactWriter: writer,
       agentRunner: runner,
+      validationCommandRunner: validationRunner,
       workItemId: "wi-001",
       agent: "codex",
       timestamp: "2026-05-29T12:34:56.000Z"
@@ -132,9 +208,11 @@ describe("run agent use case", () => {
         }
       }
     });
+    expect(validationRunner.inputs).toHaveLength(1);
     expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}")).toMatchObject({
       status: "failed",
-      runner: { exitCode: 127, error: { code: "runner_not_found" } }
+      runner: { exitCode: 127, error: { code: "runner_not_found" } },
+      validation: { status: "pass" }
     });
   });
 });
