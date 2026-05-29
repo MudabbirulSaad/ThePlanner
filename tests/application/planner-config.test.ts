@@ -16,7 +16,10 @@ describe("planner config", () => {
           claude: "/opt/claude",
           gemini: "npx gemini"
         },
-        validationCommands: ["npm test", "npm run lint"]
+        validationCommands: ["npm test", "npm run lint"],
+        agentRunnerTimeoutMs: 1234,
+        validationCommandTimeoutMs: 5678,
+        processOutputLimitBytes: 90
       })
     ).toEqual({
       planningDirectory: "project-planning",
@@ -26,7 +29,10 @@ describe("planner config", () => {
         claude: "/opt/claude",
         gemini: "npx gemini"
       },
-      validationCommands: ["npm test", "npm run lint"]
+      validationCommands: ["npm test", "npm run lint"],
+      agentRunnerTimeoutMs: 1234,
+      validationCommandTimeoutMs: 5678,
+      processOutputLimitBytes: 90
     });
   });
 
@@ -39,6 +45,15 @@ describe("planner config", () => {
     );
     expect(() => parsePlannerConfig({ validationCommands: [""] })).toThrow(
       "planner.config.json.validationCommands must not contain empty commands."
+    );
+    expect(() => parsePlannerConfig({ agentRunnerTimeoutMs: 0 })).toThrow(
+      "planner.config.json.agentRunnerTimeoutMs must be a positive integer."
+    );
+    expect(() => parsePlannerConfig({ validationCommandTimeoutMs: 1.5 })).toThrow(
+      "planner.config.json.validationCommandTimeoutMs must be a positive integer."
+    );
+    expect(() => parsePlannerConfig({ processOutputLimitBytes: -1 })).toThrow(
+      "planner.config.json.processOutputLimitBytes must be a positive integer."
     );
   });
 });

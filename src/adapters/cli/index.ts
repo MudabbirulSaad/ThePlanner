@@ -49,8 +49,16 @@ const result = await runPlannerCli(args, {
   contextFileReader: new FileContextReader(),
   runArtifactReader: new FileAgentRunArtifactReader(mapPlanningPath),
   runArtifactWriter: new FileAgentRunArtifactWriter(mapPlanningPath),
-  agentRunner: createLocalAgentRunner({ commandOverride: runnerCommand, commands: config.agentCommands }),
-  validationCommandRunner: new ProcessValidationCommandRunner(),
+  agentRunner: createLocalAgentRunner({
+    commandOverride: runnerCommand,
+    commands: config.agentCommands,
+    timeoutMs: config.agentRunnerTimeoutMs,
+    outputLimitBytes: config.processOutputLimitBytes
+  }),
+  validationCommandRunner: new ProcessValidationCommandRunner({
+    timeoutMs: config.validationCommandTimeoutMs,
+    outputLimitBytes: config.processOutputLimitBytes
+  }),
   trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()],
   defaultAgent: config.defaultAgent,
   defaultValidationCommands: config.validationCommands

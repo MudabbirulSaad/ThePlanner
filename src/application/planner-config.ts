@@ -5,6 +5,9 @@ export interface PlannerConfig {
   readonly defaultAgent: SupportedAgent;
   readonly agentCommands: Readonly<Record<SupportedAgent, string>>;
   readonly validationCommands: readonly string[];
+  readonly agentRunnerTimeoutMs: number;
+  readonly validationCommandTimeoutMs: number;
+  readonly processOutputLimitBytes: number;
 }
 
 export const defaultPlannerConfig: PlannerConfig = {
@@ -15,7 +18,10 @@ export const defaultPlannerConfig: PlannerConfig = {
     claude: "claude",
     gemini: "gemini"
   },
-  validationCommands: []
+  validationCommands: [],
+  agentRunnerTimeoutMs: 30 * 60 * 1000,
+  validationCommandTimeoutMs: 10 * 60 * 1000,
+  processOutputLimitBytes: 1024 * 1024
 };
 
 export function parsePlannerConfig(value: unknown, sourcePath = "planner.config.json"): PlannerConfig {
@@ -39,12 +45,22 @@ export function parsePlannerConfig(value: unknown, sourcePath = "planner.config.
     ...readAgentCommands(raw.agentCommands, sourcePath)
   };
   const validationCommands = readOptionalStringArray(raw, "validationCommands", sourcePath) ?? defaultPlannerConfig.validationCommands;
+  const agentRunnerTimeoutMs =
+    readOptionalPositiveInteger(raw, "agentRunnerTimeoutMs", sourcePath) ?? defaultPlannerConfig.agentRunnerTimeoutMs;
+  const validationCommandTimeoutMs =
+    readOptionalPositiveInteger(raw, "validationCommandTimeoutMs", sourcePath) ??
+    defaultPlannerConfig.validationCommandTimeoutMs;
+  const processOutputLimitBytes =
+    readOptionalPositiveInteger(raw, "processOutputLimitBytes", sourcePath) ?? defaultPlannerConfig.processOutputLimitBytes;
 
   return {
     planningDirectory,
     defaultAgent,
     agentCommands,
-    validationCommands
+    validationCommands,
+    agentRunnerTimeoutMs,
+    validationCommandTimeoutMs,
+    processOutputLimitBytes
   };
 }
 
@@ -110,6 +126,19 @@ function readOptionalStringArray(raw: Record<string, unknown>, key: string, sour
 
   if (value.some((entry) => entry.trim() === "")) {
     throw new Error(`${sourcePath}.${key} must not contain empty commands.`);
+  }
+
+  return value;
+}
+
+function readOptionalPositiveInteger(raw: Record<string, unknown>, key: string, sourcePath: string): number | undefined {
+  const value = raw[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${sourcePath}.${key} must be a positive integer.`);
   }
 
   return value;

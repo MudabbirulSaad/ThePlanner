@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { AgentRunnerRegistry, ClaudeProcessRunner, CodexProcessRunner } from "../../src/adapters/index.js";
+import {
+  AgentRunnerRegistry,
+  ClaudeProcessRunner,
+  CodexProcessRunner,
+  ProcessValidationCommandRunner
+} from "../../src/adapters/index.js";
 import type { AgentRunner, AgentRunnerInput, AgentRunnerResult } from "../../src/application/index.js";
 
 class FakeRunner implements AgentRunner {
@@ -133,5 +138,93 @@ describe("agent runner registry", () => {
       stderr: ""
     });
     expect(result.stdout).toContain("exec\n-\n# Codex prompt\n");
+  });
+
+  it("terminates agent commands after the configured timeout", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "planner-agent-timeout-"));
+    const command = join(workspace, "agent");
+    await writeFile(command, ["#!/usr/bin/env sh", "sleep 2", ""].join("\n"));
+    await chmod(command, 0o755);
+    const runner = new ClaudeProcessRunner(command, { timeoutMs: 50, outputLimitBytes: 1024 });
+
+    const result = await runner.run(baseInput);
+
+    expect(result).toMatchObject({
+      command: [command],
+      exitCode: 124,
+      error: {
+        code: "runner_timeout",
+        message: "Process timed out after 50ms."
+      }
+    });
+  });
+
+  it("caps oversized agent stdout with a truncation marker and output summary", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "planner-agent-output-"));
+    const command = join(workspace, "agent");
+    await writeFile(command, ["#!/usr/bin/env sh", "printf 'abcdefghijklmnopqrstuvwxyz'", ""].join("\n"));
+    await chmod(command, 0o755);
+    const runner = new ClaudeProcessRunner(command, { timeoutMs: 1000, outputLimitBytes: 10 });
+
+    const result = await runner.run(baseInput);
+
+    expect(result).toMatchObject({
+      command: [command],
+      exitCode: 0,
+      stdout: "abcdefghij\n[planner: stdout truncated after 10 bytes]\n",
+      output: {
+        stdoutBytes: 26,
+        stderrBytes: 0,
+        stdoutTruncated: true,
+        stderrTruncated: false,
+        outputLimitBytes: 10
+      },
+      error: {
+        code: "runner_output_limit_exceeded",
+        message: "Process output exceeded 10 bytes per stream."
+      }
+    });
+  });
+
+  it("terminates validation commands after the configured timeout", async () => {
+    const runner = new ProcessValidationCommandRunner({ timeoutMs: 50, outputLimitBytes: 1024 });
+
+    const result = await runner.run({ ...baseInput, command: "sleep 2" });
+
+    expect(result).toMatchObject({
+      command: "sleep 2",
+      exitCode: 124,
+      error: {
+        code: "validation_command_timeout",
+        message: "Process timed out after 50ms."
+      }
+    });
+  });
+
+  it("caps oversized validation stderr with a truncation marker and output summary", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "planner-validation-output-"));
+    const command = join(workspace, "validation");
+    await writeFile(command, ["#!/usr/bin/env sh", "printf 'abcdefghijklmnopqrstuvwxyz' >&2", ""].join("\n"));
+    await chmod(command, 0o755);
+    const runner = new ProcessValidationCommandRunner({ timeoutMs: 1000, outputLimitBytes: 12 });
+
+    const result = await runner.run({ ...baseInput, command });
+
+    expect(result).toMatchObject({
+      command,
+      exitCode: 0,
+      stderr: "abcdefghijkl\n[planner: stderr truncated after 12 bytes]\n",
+      output: {
+        stdoutBytes: 0,
+        stderrBytes: 26,
+        stdoutTruncated: false,
+        stderrTruncated: true,
+        outputLimitBytes: 12
+      },
+      error: {
+        code: "validation_command_output_limit_exceeded",
+        message: "Process output exceeded 12 bytes per stream."
+      }
+    });
   });
 });

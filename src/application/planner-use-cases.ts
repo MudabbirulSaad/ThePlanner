@@ -154,11 +154,20 @@ export interface AgentRunnerError {
   readonly message: string;
 }
 
+export interface ProcessOutputSummary {
+  readonly stdoutBytes: number;
+  readonly stderrBytes: number;
+  readonly stdoutTruncated: boolean;
+  readonly stderrTruncated: boolean;
+  readonly outputLimitBytes: number;
+}
+
 export interface AgentRunnerResult {
   readonly command: readonly string[];
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly output?: ProcessOutputSummary;
   readonly error?: AgentRunnerError;
 }
 
@@ -178,6 +187,7 @@ export interface ValidationCommandResult {
   readonly exitCode: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly output?: ProcessOutputSummary;
   readonly error?: AgentRunnerError;
 }
 
@@ -221,6 +231,7 @@ export interface AgentRunValidationSummary {
   readonly commands: readonly {
     readonly command: string;
     readonly exitCode: number;
+    readonly output?: ProcessOutputSummary;
     readonly error?: AgentRunnerError;
   }[];
 }
@@ -285,6 +296,7 @@ export interface AgentExecutionResult {
   readonly runner: {
     readonly command: readonly string[];
     readonly exitCode: number;
+    readonly output?: ProcessOutputSummary;
     readonly error?: AgentRunnerError;
   };
   readonly message: string;
@@ -305,6 +317,7 @@ export interface AgentRunReviewResult {
   readonly runner: {
     readonly command: readonly string[];
     readonly exitCode: number;
+    readonly output?: ProcessOutputSummary;
     readonly error?: AgentRunnerError;
   };
   readonly validation: AgentRunValidationSummary;
@@ -980,6 +993,7 @@ export async function runAgentUseCase(args: {
     commands: validationResults.map((result) => ({
       command: result.command,
       exitCode: result.exitCode,
+      ...(result.output ? { output: result.output } : {}),
       ...(result.error ? { error: result.error } : {})
     }))
   };
@@ -1026,6 +1040,7 @@ export async function runAgentUseCase(args: {
     runner: {
       command: runnerResult.command,
       exitCode: runnerResult.exitCode,
+      ...(runnerResult.output ? { output: runnerResult.output } : {}),
       ...(runnerResult.error ? { error: runnerResult.error } : {})
     },
     message:
@@ -1222,6 +1237,7 @@ function parseAgentExecutionResult(content: string): ParsedAgentExecutionResult 
     runner: {
       command: readStringArray(runner.command, "result.runner.command"),
       exitCode: readInteger(runner.exitCode, "result.runner.exitCode"),
+      ...(runner.output ? { output: readOutputSummary(runner.output, "result.runner.output") } : {}),
       ...(runner.error ? { error: readRunnerError(runner.error) } : {})
     },
     artifactPaths: readStringArray(value.artifactPaths, "result.artifactPaths"),
@@ -1257,6 +1273,9 @@ function readValidationSummary(value: unknown): AgentRunValidationSummary {
     return {
       command: readString(commandObject.command, `metadata.validation.commands[${index}].command`),
       exitCode: readInteger(commandObject.exitCode, `metadata.validation.commands[${index}].exitCode`),
+      ...(commandObject.output
+        ? { output: readOutputSummary(commandObject.output, `metadata.validation.commands[${index}].output`) }
+        : {}),
       ...(commandObject.error ? { error: readRunnerError(commandObject.error) } : {})
     };
   });
@@ -1272,6 +1291,17 @@ function readRunnerError(value: unknown): AgentRunnerError {
   };
 }
 
+function readOutputSummary(value: unknown, path: string): ProcessOutputSummary {
+  const output = parseJsonObjectProperty(value, path);
+  return {
+    stdoutBytes: readInteger(output.stdoutBytes, `${path}.stdoutBytes`),
+    stderrBytes: readInteger(output.stderrBytes, `${path}.stderrBytes`),
+    stdoutTruncated: readBoolean(output.stdoutTruncated, `${path}.stdoutTruncated`),
+    stderrTruncated: readBoolean(output.stderrTruncated, `${path}.stderrTruncated`),
+    outputLimitBytes: readInteger(output.outputLimitBytes, `${path}.outputLimitBytes`)
+  };
+}
+
 function readString(value: unknown, path: string): string {
   if (typeof value !== "string") {
     throw new Error(`${path} must be a string.`);
@@ -1283,6 +1313,14 @@ function readString(value: unknown, path: string): string {
 function readInteger(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isInteger(value)) {
     throw new Error(`${path} must be an integer.`);
+  }
+
+  return value;
+}
+
+function readBoolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${path} must be a boolean.`);
   }
 
   return value;

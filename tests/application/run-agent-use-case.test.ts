@@ -236,6 +236,80 @@ describe("run agent use case", () => {
     });
   });
 
+  it("persists process output summaries in run result JSON", async () => {
+    const writer = new FakeArtifactWriter();
+    const runner = new FakeRunner({
+      command: ["codex"],
+      exitCode: 0,
+      stdout: "abcdefghij\n[planner: stdout truncated after 10 bytes]\n",
+      stderr: "",
+      output: {
+        stdoutBytes: 26,
+        stderrBytes: 0,
+        stdoutTruncated: true,
+        stderrTruncated: false,
+        outputLimitBytes: 10
+      },
+      error: {
+        code: "runner_output_limit_exceeded",
+        message: "Process output exceeded 10 bytes per stream."
+      }
+    });
+    const validationRunner = new FakeValidationRunner([
+      {
+        command: "npm test",
+        exitCode: 0,
+        stdout: "",
+        stderr: "abcdefghijkl\n[planner: stderr truncated after 12 bytes]\n",
+        output: {
+          stdoutBytes: 0,
+          stderrBytes: 26,
+          stdoutTruncated: false,
+          stderrTruncated: true,
+          outputLimitBytes: 12
+        },
+        error: {
+          code: "validation_command_output_limit_exceeded",
+          message: "Process output exceeded 12 bytes per stream."
+        }
+      }
+    ]);
+
+    const result = await runAgentUseCase({
+      graphRepository: { load: async () => graph },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: writer,
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      workItemId: "wi-001",
+      agent: "codex",
+      timestamp: "2026-05-29T12:34:56.000Z"
+    });
+
+    const resultJson = JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}");
+
+    expect(result).toMatchObject({
+      status: "failed",
+      runner: { output: { stdoutTruncated: true }, error: { code: "runner_output_limit_exceeded" } },
+      validation: {
+        status: "fail",
+        commands: [{ output: { stderrTruncated: true }, error: { code: "validation_command_output_limit_exceeded" } }]
+      }
+    });
+    expect(resultJson).toMatchObject({
+      runner: { output: { stdoutBytes: 26, stdoutTruncated: true, outputLimitBytes: 10 } },
+      validation: {
+        commands: [{ output: { stderrBytes: 26, stderrTruncated: true, outputLimitBytes: 12 } }]
+      }
+    });
+    expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/runner-stdout.log")).toContain(
+      "[planner: stdout truncated after 10 bytes]"
+    );
+    expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/validation-stderr.log")).toContain(
+      "[planner: stderr truncated after 12 bytes]"
+    );
+  });
+
   it("summarizes a saved run for human review", async () => {
     const reader = new FakeArtifactReader(savedRunArtifacts());
 
