@@ -1,6 +1,7 @@
 import {
   applyGraphPatches,
   generateIntakeQuestions,
+  renderRefinedBriefScaffold,
   reconcileGraphProjections,
   renderAllProjections,
   validatePlanningGraph,
@@ -62,6 +63,12 @@ export interface WorkspaceInitializer {
 
 export interface IntakeIdeaReader {
   readonly read: (path: string) => Promise<string>;
+}
+
+export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
+
+export interface RefinedBriefWriter {
+  readonly write: (path: string, content: string, options?: { readonly overwrite?: boolean }) => Promise<RefinedBriefWriteStatus>;
 }
 
 export interface ValidateGraphUseCaseResult {
@@ -151,6 +158,44 @@ export async function intakeQuestionsUseCase(args: {
     ...questionSet,
     agentPrompt:
       "Use the intake idea and grouped questions below to grill me. Ask follow-up questions until the target user, problem, MVP scope, non-goals, constraints, success criteria, and risks/open questions are clear enough to draft a refined brief."
+  };
+}
+
+export async function refineIntakeBriefUseCase(args: {
+  readonly intakeIdeaReader: IntakeIdeaReader;
+  readonly refinedBriefWriter: RefinedBriefWriter;
+  readonly fromPath: string;
+  readonly outPath: string;
+  readonly force?: boolean;
+}): Promise<{
+  readonly status: RefinedBriefWriteStatus;
+  readonly created: readonly string[];
+  readonly skipped: readonly string[];
+  readonly overwritten: readonly string[];
+  readonly sourcePath: string;
+  readonly outPath: string;
+  readonly deferred: true;
+  readonly message: string;
+}> {
+  const sourceContent = await args.intakeIdeaReader.read(args.fromPath);
+  const content = renderRefinedBriefScaffold({
+    sourcePath: args.fromPath,
+    sourceContent
+  });
+  const status = await args.refinedBriefWriter.write(args.outPath, content, { overwrite: args.force ?? false });
+
+  return {
+    status,
+    created: status === "created" ? [args.outPath] : [],
+    skipped: status === "skipped" ? [args.outPath] : [],
+    overwritten: status === "overwritten" ? [args.outPath] : [],
+    sourcePath: args.fromPath,
+    outPath: args.outPath,
+    deferred: true,
+    message:
+      status === "skipped"
+        ? "Refined brief already exists and was left untouched. Pass --force to replace it."
+        : "Scaffolded a refined brief with TODO markers. Fill it before graph planning."
   };
 }
 

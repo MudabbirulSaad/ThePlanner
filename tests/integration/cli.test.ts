@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { runPlannerCli } from "../../src/application/index.js";
 import { parsePlanningGraphJson } from "../../src/application/index.js";
-import { FileIntakeIdeaReader, FileWorkspaceInitializer } from "../../src/adapters/index.js";
+import { FileIntakeIdeaReader, FileRefinedBriefWriter, FileWorkspaceInitializer } from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
@@ -143,6 +143,76 @@ describe("planner CLI use case wiring", () => {
     expect(result.stdout).toContain("# Intake Grilling Questions");
     expect(result.stdout).toContain("## MVP Scope");
     expect(result.stdout).toContain("How to use with an agent:");
+  });
+
+  it("creates a refined brief file and reports JSON paths", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-refine-"));
+
+    try {
+      process.chdir(workspace);
+      await writeFile("idea.md", "Build a planning graph tool.\n", "utf8");
+
+      const result = await runPlannerCli(
+        ["intake", "refine", "--from", "idea.md", "--out", "planning/intake/refined-brief.md", "--json"],
+        {
+          graphRepository: { load: async () => graph },
+          projectionWriter: { writeAll: async () => undefined },
+          intakeIdeaReader: new FileIntakeIdeaReader(),
+          refinedBriefWriter: new FileRefinedBriefWriter()
+        }
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "created",
+        created: ["planning/intake/refined-brief.md"],
+        skipped: [],
+        sourcePath: "idea.md",
+        outPath: "planning/intake/refined-brief.md",
+        deferred: true
+      });
+      const refinedBrief = await readFile("planning/intake/refined-brief.md", "utf8");
+      expect(refinedBrief).toContain("# Refined Brief");
+      expect(refinedBrief).toContain("## Product Summary");
+      expect(refinedBrief).toContain("## Open Questions");
+      expect(refinedBrief).toContain("Build a planning graph tool.");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("does not overwrite an existing refined brief without force", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-refine-skip-"));
+
+    try {
+      process.chdir(workspace);
+      await writeFile("idea.md", "New raw idea\n", "utf8");
+      await writeFile("refined-brief.md", "existing user brief\n", "utf8");
+
+      const result = await runPlannerCli(
+        ["intake", "refine", "--from", "idea.md", "--out", "refined-brief.md", "--json"],
+        {
+          graphRepository: { load: async () => graph },
+          projectionWriter: { writeAll: async () => undefined },
+          intakeIdeaReader: new FileIntakeIdeaReader(),
+          refinedBriefWriter: new FileRefinedBriefWriter()
+        }
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "skipped",
+        created: [],
+        skipped: ["refined-brief.md"]
+      });
+      expect(await readFile("refined-brief.md", "utf8")).toBe("existing user brief\n");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
   });
 
   it("returns a useful error for missing intake idea files", async () => {

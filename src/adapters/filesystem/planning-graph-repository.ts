@@ -9,6 +9,8 @@ import type {
   PlanningChangeLogEvent,
   ProjectionReader,
   ProjectionWriter,
+  RefinedBriefWriter,
+  RefinedBriefWriteStatus,
   WorkspaceInitializer,
   WorkspaceEntryStatus
 } from "../../application/index.js";
@@ -74,6 +76,41 @@ export class FileIntakeIdeaReader implements IntakeIdeaReader {
     } catch (error) {
       if (isNotFound(error)) {
         throw new Error(`Intake idea file not found: ${path}`);
+      }
+      throw error;
+    }
+  }
+}
+
+export class FileRefinedBriefWriter implements RefinedBriefWriter {
+  public async write(
+    path: string,
+    content: string,
+    options: { readonly overwrite?: boolean } = {}
+  ): Promise<RefinedBriefWriteStatus> {
+    const resolvedPath = resolve(path);
+    await mkdir(dirname(resolvedPath), { recursive: true });
+
+    if (options.overwrite) {
+      try {
+        await writeFile(resolvedPath, content, { encoding: "utf8", flag: "wx" });
+        return "created";
+      } catch (error) {
+        if (!isAlreadyExists(error)) {
+          throw error;
+        }
+      }
+
+      await writeFile(resolvedPath, content, "utf8");
+      return "overwritten";
+    }
+
+    try {
+      await writeFile(resolvedPath, content, { encoding: "utf8", flag: "wx" });
+      return "created";
+    } catch (error) {
+      if (isAlreadyExists(error)) {
+        return "skipped";
       }
       throw error;
     }

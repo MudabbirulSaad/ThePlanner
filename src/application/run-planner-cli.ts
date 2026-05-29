@@ -8,6 +8,7 @@ import {
   exportProjectionsUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
+  refineIntakeBriefUseCase,
   reconcileGraphUseCase,
   statusUseCase,
   validateGraphUseCase
@@ -18,6 +19,7 @@ import type {
   IntakeIdeaReader,
   ProjectionReader,
   ProjectionWriter,
+  RefinedBriefWriter,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
 
@@ -28,6 +30,7 @@ export interface PlannerCliServices {
   readonly changeLogWriter?: ChangeLogWriter;
   readonly workspaceInitializer?: WorkspaceInitializer;
   readonly intakeIdeaReader?: IntakeIdeaReader;
+  readonly refinedBriefWriter?: RefinedBriefWriter;
 }
 
 type RenderableIntakeQuestionResult = {
@@ -75,29 +78,66 @@ export async function runPlannerCli(
   }
 
   if (command === "intake") {
-    if (rest[0] !== "questions") {
-      return { exitCode: 1, stdout: "", stderr: "planner intake requires the questions subcommand\n" };
+    if (rest[0] === "questions") {
+      if (!services.intakeIdeaReader) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake questions requires an intake idea reader\n" };
+      }
+
+      const from = readOption(rest, "--from");
+      if (!from) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake questions requires --from <file>\n" };
+      }
+
+      try {
+        const result = await intakeQuestionsUseCase({ intakeIdeaReader: services.intakeIdeaReader, path: from });
+        return render(0, result, json);
+      } catch (error) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `${error instanceof Error ? error.message : String(error)}\n`
+        };
+      }
     }
 
-    if (!services.intakeIdeaReader) {
-      return { exitCode: 1, stdout: "", stderr: "planner intake questions requires an intake idea reader\n" };
+    if (rest[0] === "refine") {
+      if (!services.intakeIdeaReader) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires an intake idea reader\n" };
+      }
+
+      if (!services.refinedBriefWriter) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires a refined brief writer\n" };
+      }
+
+      const from = readOption(rest, "--from");
+      if (!from) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires --from <file>\n" };
+      }
+
+      const out = readOption(rest, "--out");
+      if (!out) {
+        return { exitCode: 1, stdout: "", stderr: "planner intake refine requires --out <file>\n" };
+      }
+
+      try {
+        const result = await refineIntakeBriefUseCase({
+          intakeIdeaReader: services.intakeIdeaReader,
+          refinedBriefWriter: services.refinedBriefWriter,
+          fromPath: from,
+          outPath: out,
+          force: rest.includes("--force")
+        });
+        return render(0, result, json);
+      } catch (error) {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `${error instanceof Error ? error.message : String(error)}\n`
+        };
+      }
     }
 
-    const from = readOption(rest, "--from");
-    if (!from) {
-      return { exitCode: 1, stdout: "", stderr: "planner intake questions requires --from <file>\n" };
-    }
-
-    try {
-      const result = await intakeQuestionsUseCase({ intakeIdeaReader: services.intakeIdeaReader, path: from });
-      return render(0, result, json);
-    } catch (error) {
-      return {
-        exitCode: 1,
-        stdout: "",
-        stderr: `${error instanceof Error ? error.message : String(error)}\n`
-      };
-    }
+    return { exitCode: 1, stdout: "", stderr: "planner intake requires the questions or refine subcommand\n" };
   }
 
   if (command === "plan") {
@@ -174,6 +214,20 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
     };
   }
 
+  if (isRefinedBriefResult(value)) {
+    return {
+      exitCode,
+      stdout: [
+        `refined_brief: ${value.status}`,
+        `source: ${value.sourcePath}`,
+        `out: ${value.outPath}`,
+        value.message,
+        ""
+      ].join("\n"),
+      stderr: ""
+    };
+  }
+
   return {
     exitCode,
     stdout: `${JSON.stringify(value)}\n`,
@@ -223,6 +277,22 @@ function isIntakeQuestionResult(value: unknown): value is RenderableIntakeQuesti
       "agentPrompt" in value &&
       "groups" in value &&
       Array.isArray(value.groups)
+  );
+}
+
+function isRefinedBriefResult(value: unknown): value is {
+  readonly status: string;
+  readonly sourcePath: string;
+  readonly outPath: string;
+  readonly message: string;
+} {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "status" in value &&
+      "sourcePath" in value &&
+      "outPath" in value &&
+      "message" in value
   );
 }
 
