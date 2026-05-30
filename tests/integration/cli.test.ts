@@ -1034,15 +1034,16 @@ describe("planner CLI use case wiring", () => {
         context: [
           { path: "AGENTS.md", source: "workspace" },
           { path: "planning/work-items/wi-001-work.md", source: "generated" },
-          { path: "planning/dependencies.md", source: "generated" },
-          { path: "docs/architecture/proposed-architecture.md", source: "generated" }
+          { path: "planning/execution-context/wi-001.md", source: "generated" },
+          { path: "planning/dependencies.md", source: "generated" }
         ]
       });
       expect(output.content).toContain("# Agent Context Bundle");
       expect(output.content).toContain("Paste this full bundle into Codex.");
       expect(output.content).toContain("## Context: AGENTS.md");
+      expect(output.content).toContain("## Context: planning/execution-context/wi-001.md");
       expect(output.content).toContain("## Context: planning/dependencies.md");
-      expect(output.content).toContain("## Context: docs/architecture/proposed-architecture.md");
+      expect(output.content).not.toContain("## Context: docs/architecture/proposed-architecture.md");
       expect(await listWorkspaceFiles(".")).toEqual(before);
     } finally {
       process.chdir(originalCwd);
