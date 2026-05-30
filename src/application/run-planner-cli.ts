@@ -25,7 +25,6 @@ import type {
   AgentRunArtifactReader,
   AgentRunArtifactWriter,
   ChangeLogWriter,
-  ContextFileReader,
   GraphRepository,
   IntakeIdeaReader,
   JsonSchemaValidator,
@@ -36,9 +35,9 @@ import type {
   SupportedTracker,
   TrackerSyncAdapter,
   ValidationCommandRunner,
-  SupportedAgent,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
+import type { ContextFileReader, SupportedAgent } from "./agent-context-bundle.js";
 
 export interface PlannerCliServices {
   readonly graphRepository: GraphRepository;

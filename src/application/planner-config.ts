@@ -1,4 +1,4 @@
-import type { SupportedAgent } from "./planner-use-cases.js";
+import type { SupportedAgent } from "./agent-context-bundle.js";
 
 export interface PlannerConfig {
   readonly planningDirectory: string;

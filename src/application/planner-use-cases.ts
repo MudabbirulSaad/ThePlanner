@@ -6,25 +6,27 @@ import {
   renderRefinedBriefScaffold,
   reconcileGraphProjections,
   renderAllProjections,
-  renderDocumentProjection,
-  renderWorkItemProjection,
   validatePlanningGraph,
   workItemProjectionPaths
 } from "../core/index.js";
 import type {
-  DocumentProjectionNode,
   GraphValidationResult,
   IntakeQuestionSet,
   PlanningGraph,
-  PlanningNodeId,
   ProjectionInput,
   ReconciliationResult,
   RenderedProjection,
-  WorkItemId,
   WorkItemNode
 } from "../core/index.js";
 import { graphSchemaTemplate } from "../templates/graph-schema-template.js";
 import { intakeBriefTemplate } from "../templates/intake-brief-template.js";
+import {
+  buildAgentContextSections,
+  renderAgentContextBundle,
+  renderAgentContextMarkdown,
+  validationCommandsForWorkItem
+} from "./agent-context-bundle.js";
+import type { AgentContextBundleSection, ContextFileReader, SupportedAgent } from "./agent-context-bundle.js";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
@@ -120,10 +122,6 @@ export interface RefinedBriefWriter {
   readonly write: (path: string, content: string, options?: { readonly overwrite?: boolean }) => Promise<RefinedBriefWriteStatus>;
 }
 
-export interface ContextFileReader {
-  readonly readIfExists: (path: string) => Promise<string | undefined>;
-}
-
 export interface AgentRunArtifactFile {
   readonly path: string;
   readonly content: string;
@@ -137,7 +135,6 @@ export interface AgentRunArtifactReader {
   readonly read: (path: string) => Promise<string>;
 }
 
-export type SupportedAgent = "codex" | "claude" | "gemini";
 export type RunnableAgent = SupportedAgent;
 export type SupportedTracker = "github";
 
@@ -234,12 +231,6 @@ export interface AgentRunValidationSummary {
     readonly output?: ProcessOutputSummary;
     readonly error?: AgentRunnerError;
   }[];
-}
-
-export interface AgentContextBundleSection {
-  readonly path: string;
-  readonly source: "workspace" | "generated";
-  readonly content: string;
 }
 
 export interface AgentContextBundleResult {
@@ -822,7 +813,7 @@ export async function prepareAgentContextBundleUseCase(args: {
     throw new Error(`Work Item is not agent-eligible for prepare: ${workItem.id}. ${reasons}`);
   }
 
-  const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
+  const context = await buildAgentContextSections({ graph, workItem, contextFileReader: args.contextFileReader });
   const validationCommands = validationCommandsForWorkItem(workItem, args.defaultValidationCommands);
   const content = renderAgentContextBundle({
     agent,
@@ -931,7 +922,7 @@ export async function runAgentUseCase(args: {
     throw new Error(`Work Item is not ready for agent run: ${workItem.id}. ${reasons}`);
   }
 
-  const context = await buildAgentContextSections(graph, workItem, args.contextFileReader);
+  const context = await buildAgentContextSections({ graph, workItem, contextFileReader: args.contextFileReader });
   const validationCommands = validationCommandsForWorkItem(workItem, args.defaultValidationCommands);
   const prompt = renderAgentContextBundle({
     agent,
@@ -1364,143 +1355,6 @@ function graphVersionFromJson(value: unknown): number {
   return 0;
 }
 
-async function buildAgentContextSections(
-  graph: PlanningGraph,
-  workItem: WorkItemNode,
-  contextFileReader: ContextFileReader
-): Promise<readonly AgentContextBundleSection[]> {
-  const sections: AgentContextBundleSection[] = [];
-  const agents = await contextFileReader.readIfExists("AGENTS.md");
-  if (agents !== undefined) {
-    sections.push({ path: "AGENTS.md", source: "workspace", content: agents });
-  }
-
-  const workItemProjection = renderWorkItemProjection(graph, workItem);
-  sections.push({ path: workItemProjection.path, source: "generated", content: workItemProjection.content });
-
-  const dependencyView = graph.nodes
-    .filter(isDocumentProjectionNode)
-    .filter((document) => document.projectionType === "dependency_view")
-    .sort((left, right) => left.path.localeCompare(right.path))[0];
-  if (dependencyView) {
-    const rendered = renderDocumentProjection(graph, dependencyView);
-    sections.push({ path: rendered.path, source: "generated", content: rendered.content });
-  }
-
-  for (const document of relatedDocumentProjections(graph, workItem.id)) {
-    if (document.projectionType === "dependency_view") {
-      continue;
-    }
-    const rendered = renderDocumentProjection(graph, document);
-    sections.push({ path: rendered.path, source: "generated", content: rendered.content });
-  }
-
-  return sections;
-}
-
-function relatedDocumentProjections(graph: PlanningGraph, workItemId: WorkItemId): readonly DocumentProjectionNode[] {
-  const relatedIds = new Set<PlanningNodeId>([workItemId]);
-  for (const edge of graph.edges) {
-    if (edge.source === workItemId) {
-      relatedIds.add(edge.target);
-    }
-    if (edge.target === workItemId) {
-      relatedIds.add(edge.source);
-    }
-  }
-
-  return graph.nodes
-    .filter(isDocumentProjectionNode)
-    .filter((document) =>
-      graph.edges.some(
-        (edge) =>
-          edge.type === "references" &&
-          ((edge.source === document.id && relatedIds.has(edge.target)) ||
-            (relatedIds.has(edge.source) && edge.target === document.id))
-      )
-    )
-    .sort((left, right) => left.path.localeCompare(right.path));
-}
-
-function renderAgentContextBundle(args: {
-  readonly agent: SupportedAgent;
-  readonly mode: "prepare" | "run";
-  readonly graph: PlanningGraph;
-  readonly workItem: WorkItemNode;
-  readonly readiness: WorkItemNode["readinessSnapshot"];
-  readonly validationCommands: readonly string[];
-  readonly context: readonly AgentContextBundleSection[];
-}): string {
-  const usageSection =
-    args.mode === "prepare"
-      ? [
-          "## Manual Use",
-          "",
-          `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from theplanner prepare.`
-        ]
-      : [
-          "## Run Instructions",
-          "",
-          `You are being invoked by theplanner run as ${agentDisplayName(args.agent)}. Complete the selected Work Item only, then stop.`
-        ];
-
-  return [
-    "# Agent Context Bundle",
-    "",
-    `Agent: ${args.agent}`,
-    `Work Item: ${args.workItem.id} - ${args.workItem.title}`,
-    `Graph Version: ${args.graph.graphVersion}`,
-    `Readiness: ${args.readiness.labels.join(", ")}`,
-    "",
-    "## Readiness Details",
-    "",
-    list(args.readiness.reasons),
-    "",
-    ...usageSection,
-    "",
-    "## Scope Reminder",
-    "",
-    `- Complete only Work Item ${args.workItem.id}.`,
-    ...(args.workItem.boundaryNotes ?? []).map((note) => `- ${note}`),
-    "- Preserve unrelated existing changes.",
-    "- Do not add product features outside this Work Item.",
-    "- Do not mark Work Items done from this bundle.",
-    "- Do not call live LLM providers or external services unless the Work Item explicitly requires it.",
-    "",
-    "## Validation Commands",
-    "",
-    list(args.validationCommands),
-    "",
-    "## Safe Failure",
-    "",
-    args.workItem.safeFailureGuidance?.trim() || "Stop and report missing safe-failure guidance before making changes.",
-    "",
-    ...args.context.flatMap((section) => [
-      `## Context: ${section.path}`,
-      "",
-      `Source: ${section.source}`,
-      "",
-      fence("markdown", section.content),
-      ""
-    ])
-  ].join("\n");
-}
-
-function renderAgentContextMarkdown(context: readonly AgentContextBundleSection[]): string {
-  return [
-    "# Agent Run Context",
-    "",
-    ...context.flatMap((section) => [
-      `## ${section.path}`,
-      "",
-      `Source: ${section.source}`,
-      "",
-      fence("markdown", section.content),
-      ""
-    ])
-  ].join("\n");
-}
-
 function createAgentRunId(timestamp: string, workItemId: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) {
@@ -1525,34 +1379,6 @@ function parseRunnableAgent(agent: string): RunnableAgent {
   }
 
   throw new Error(`Unsupported run agent: ${agent}. Supported run agents: codex, claude, gemini.`);
-}
-
-function agentDisplayName(agent: SupportedAgent): string {
-  return {
-    codex: "Codex",
-    claude: "Claude Code",
-    gemini: "Gemini CLI"
-  }[agent];
-}
-
-function validationCommandsForWorkItem(
-  workItem: WorkItemNode,
-  defaultValidationCommands: readonly string[] | undefined
-): readonly string[] {
-  const workItemCommands = workItem.validationMethods.map((method) => method.command ?? method.expectedResult);
-  return workItemCommands.length > 0 ? workItemCommands : (defaultValidationCommands ?? []);
-}
-
-function fence(language: string, content: string): string {
-  return `${content.includes("```") ? "````" : "```"}${language}\n${content.trimEnd()}\n${content.includes("```") ? "````" : "```"}`;
-}
-
-function list(values: readonly string[]): string {
-  return values.length === 0 ? "- None" : values.map((value) => `- ${value}`).join("\n");
-}
-
-function isDocumentProjectionNode(node: { readonly kind: string }): node is DocumentProjectionNode {
-  return node.kind === "document_projection";
 }
 
 type JsonLoadFailure = {
