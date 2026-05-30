@@ -38,6 +38,72 @@ const validProposal = {
   }
 };
 
+const graphWithRequirement = parsePlanningGraphJson({
+  schema_version: "0.1.0",
+  graph_version: 1,
+  nodes: {
+    requirements: [
+      {
+        id: "req-001",
+        title: "Dry-run graph operations",
+        type: "functional",
+        status: "active",
+        statement: "The planner must validate graph operation dry-runs before save.",
+        provenance: {
+          source_type: "user_answer",
+          source_reference: "planning/intake/refined-brief.md#requirements",
+          created_by: "test",
+          confidence: "high"
+        }
+      }
+    ],
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [],
+    hitl_gates: [],
+    components: [],
+    work_items: [],
+    document_projections: [],
+    execution_slices: []
+  },
+  edges: []
+});
+
+const validWorkItemProposal = {
+  operation: "add_work_item",
+  work_item: {
+    id: "wi-001",
+    title: "Add Work Item operation",
+    execution_state: "backlog",
+    context_summary: "Add a testable graph operation for Work Items.",
+    boundary_notes: ["Do not implement provider prompts."],
+    acceptance_criteria: ["A valid proposal creates a candidate Work Item."],
+    validation_methods: [
+      {
+        type: "test",
+        command: "npm test -- tests/core/graph-operations.test.ts",
+        expected_result: "The Work Item graph operation tests pass."
+      }
+    ],
+    safe_failure_guidance: "Reject the proposal and report missing fields instead of saving a partial Work Item.",
+    provenance: {
+      source_type: "planner_inference",
+      source_reference: "issues/033-add-testable-work-item-graph-operation.md",
+      created_by: "test proposer",
+      confidence: "medium"
+    }
+  },
+  edges: [
+    {
+      source: "wi-001",
+      target: "req-001",
+      type: "satisfies",
+      rationale: "The Work Item implements testable graph operation dry-runs."
+    }
+  ]
+};
+
 describe("graph operation dry-run use case", () => {
   it("returns a validated candidate graph without saving or mutating canonical graph", async () => {
     let saveCalled = false;
@@ -293,5 +359,89 @@ describe("graph operation dry-run use case", () => {
       ]
     });
     expect(result.candidateGraph).toBeUndefined();
+  });
+
+  it("dry-runs valid Work Item proposals with derived readiness and traceability", async () => {
+    const result = await graphOperationDryRunUseCase({
+      graphRepository: { load: async () => graphWithRequirement },
+      proposalReader: { readJson: async () => validWorkItemProposal },
+      fromPath: "proposal.json"
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      operation: "AddWorkItem",
+      graphVersionBefore: 1,
+      graphVersionAfter: 2,
+      validation: { status: "pass" },
+      candidateGraph: {
+        nodes: {
+          work_items: [
+            {
+              id: "wi-001",
+              readiness_snapshot: {
+                graph_version: 2,
+                labels: ["agent_eligible", "afk_ready"]
+              },
+              context_summary: "Add a testable graph operation for Work Items.",
+              boundary_notes: ["Do not implement provider prompts."],
+              acceptance_criteria: ["A valid proposal creates a candidate Work Item."],
+              safe_failure_guidance: "Reject the proposal and report missing fields instead of saving a partial Work Item."
+            }
+          ]
+        },
+        edges: [
+          {
+            source: "wi-001",
+            target: "req-001",
+            type: "satisfies",
+            rationale: "The Work Item implements testable graph operation dry-runs."
+          }
+        ]
+      }
+    });
+  });
+
+  it("rejects invalid Work Item proposals before save", async () => {
+    let saveCalled = false;
+    const result = await graphOperationDryRunUseCase({
+      graphRepository: {
+        load: async () => graphWithRequirement,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      proposalReader: {
+        readJson: async () => ({
+          ...validWorkItemProposal,
+          work_item: {
+            ...validWorkItemProposal.work_item,
+            validation_methods: [
+              {
+                type: "manual_review",
+                expected_result: "Reviewer checks the change."
+              }
+            ]
+          }
+        })
+      },
+      fromPath: "proposal.json"
+    });
+
+    expect(result).toMatchObject({
+      status: "rejected",
+      operation: "AddWorkItem",
+      operationErrors: [
+        {
+          code: "work_item_executable_validation_required",
+          message: "LLM-origin AddWorkItem proposals require a command or test validation method with an explicit command.",
+          nodeId: "wi-001"
+        }
+      ]
+    });
+    expect(result.candidateGraph).toBeUndefined();
+    expect(saveCalled).toBe(false);
+    expect(graphWithRequirement.nodes).toHaveLength(1);
+    expect(graphWithRequirement.edges).toHaveLength(0);
   });
 });

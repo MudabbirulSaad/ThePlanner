@@ -13,6 +13,7 @@ import {
 import type {
   GraphValidationResult,
   DecisionNode,
+  DependencyEdge,
   GraphOperationApprovalCategory,
   IntakeQuestionSet,
   OpenQuestionNode,
@@ -23,6 +24,7 @@ import type {
   ReconciliationResult,
   RequirementNode,
   RenderedProjection,
+  ValidationMethod,
   WorkItemNode
 } from "../core/index.js";
 import { graphSchemaTemplate } from "../templates/graph-schema-template.js";
@@ -1477,6 +1479,52 @@ function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation
     };
   }
 
+  if (operationName === "add_work_item" || operationName === "AddWorkItem") {
+    const rawWorkItem = parseJsonObjectProperty(operation.work_item ?? operation.workItem, "work_item");
+    const workItem: WorkItemNode = {
+      id: readString(rawWorkItem.id, "work_item.id") as WorkItemNode["id"],
+      kind: "work_item",
+      title: readString(rawWorkItem.title, "work_item.title"),
+      status: readString(rawWorkItem.status ?? "planned", "work_item.status") as WorkItemNode["status"],
+      executionState: readString(
+        rawWorkItem.execution_state ?? rawWorkItem.executionState ?? "backlog",
+        "work_item.execution_state"
+      ) as WorkItemNode["executionState"],
+      readinessSnapshot: {
+        graphVersion: 1 as WorkItemNode["readinessSnapshot"]["graphVersion"],
+        labels: ["agent_eligible"],
+        reasons: ["Readiness is derived during candidate graph application."]
+      },
+      contextSummary:
+        rawWorkItem.context_summary || rawWorkItem.contextSummary
+          ? readString(rawWorkItem.context_summary ?? rawWorkItem.contextSummary, "work_item.context_summary")
+          : undefined,
+      boundaryNotes: readStringArray(
+        rawWorkItem.boundary_notes ?? rawWorkItem.boundaryNotes ?? [],
+        "work_item.boundary_notes"
+      ),
+      acceptanceCriteria: readStringArray(
+        rawWorkItem.acceptance_criteria ?? rawWorkItem.acceptanceCriteria ?? [],
+        "work_item.acceptance_criteria"
+      ),
+      validationMethods: readValidationMethods(
+        rawWorkItem.validation_methods ?? rawWorkItem.validationMethods ?? [],
+        "work_item.validation_methods"
+      ),
+      safeFailureGuidance:
+        rawWorkItem.safe_failure_guidance || rawWorkItem.safeFailureGuidance
+          ? readString(rawWorkItem.safe_failure_guidance ?? rawWorkItem.safeFailureGuidance, "work_item.safe_failure_guidance")
+          : undefined,
+      ...readOptionalProvenance(rawWorkItem, "work_item")
+    };
+
+    return {
+      kind: "AddWorkItem",
+      workItem,
+      edges: readDependencyEdges(operation.edges ?? operation.traceability_edges ?? operation.traceabilityEdges ?? [], "edges")
+    };
+  }
+
   throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
 }
 
@@ -1514,6 +1562,31 @@ function readApprovalClassification(value: unknown): {
     ) as GraphOperationApprovalCategory,
     rationale: readString(rawApprovalClassification.rationale, "approval_classification.rationale")
   };
+}
+
+function readDependencyEdges(value: unknown, path: string): readonly DependencyEdge[] {
+  return readArray(value, path).map((edge, index) => {
+    const rawEdge = parseJsonObjectProperty(edge, `${path}[${index}]`);
+    return {
+      source: readString(rawEdge.source, `${path}[${index}].source`) as DependencyEdge["source"],
+      target: readString(rawEdge.target, `${path}[${index}].target`) as DependencyEdge["target"],
+      type: readString(rawEdge.type, `${path}[${index}].type`) as DependencyEdge["type"],
+      rationale: readString(rawEdge.rationale, `${path}[${index}].rationale`)
+    };
+  });
+}
+
+function readValidationMethods(value: unknown, path: string): readonly ValidationMethod[] {
+  return readArray(value, path).map((method, index) => {
+    const rawMethod = parseJsonObjectProperty(method, `${path}[${index}]`);
+    return {
+      type: readString(rawMethod.type, `${path}[${index}].type`) as ValidationMethod["type"],
+      ...(rawMethod.command === undefined
+        ? {}
+        : { command: readString(rawMethod.command, `${path}[${index}].command`) }),
+      expectedResult: readString(rawMethod.expected_result ?? rawMethod.expectedResult, `${path}[${index}].expected_result`)
+    };
+  });
 }
 
 function readValidationSummary(value: unknown): AgentRunValidationSummary {

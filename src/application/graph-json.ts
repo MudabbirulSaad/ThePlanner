@@ -153,7 +153,8 @@ export function parsePlanningGraphJson(value: unknown): PlanningGraph {
         boundaryNotes: optionalStringArray(node.boundary_notes),
         acceptanceCriteria: strings(node.acceptance_criteria),
         validationMethods: validationMethods(node.validation_methods),
-        safeFailureGuidance: optionalText(node.safe_failure_guidance)
+        safeFailureGuidance: optionalText(node.safe_failure_guidance),
+        provenance: provenance(node.provenance)
       })),
       ...(raw.nodes.document_projections ?? []).map((node) => ({
         id: text(node.id),
@@ -274,7 +275,8 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
           command: method.command,
           expected_result: method.expectedResult
         })),
-        safe_failure_guidance: node.safeFailureGuidance
+        safe_failure_guidance: node.safeFailureGuidance,
+        provenance: serializeProvenance(node.provenance)
       })),
       document_projections: graph.nodes.filter(isDocumentProjection).map((node) => ({
         id: node.id,

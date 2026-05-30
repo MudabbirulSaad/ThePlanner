@@ -1,7 +1,22 @@
-import type { DecisionNode, OpenQuestionNode, PlanningGraph, PlanningNode, Provenance, RequirementNode } from "./graph.js";
+import type {
+  DecisionNode,
+  DependencyEdge,
+  OpenQuestionNode,
+  PlanningGraph,
+  PlanningNode,
+  Provenance,
+  RequirementNode,
+  ValidationMethod,
+  WorkItemNode
+} from "./graph.js";
 import { graphVersion, stableId } from "./graph.js";
+import { deriveReadinessSnapshot, validatePlanningGraph } from "./validation.js";
 
-export type ProposedGraphOperation = AddOpenQuestionGraphOperation | AddRequirementGraphOperation | AddDecisionGraphOperation;
+export type ProposedGraphOperation =
+  | AddOpenQuestionGraphOperation
+  | AddRequirementGraphOperation
+  | AddDecisionGraphOperation
+  | AddWorkItemGraphOperation;
 
 export type GraphOperationApprovalCategory =
   | "none"
@@ -31,6 +46,12 @@ export interface AddDecisionGraphOperation {
   readonly kind: "AddDecision";
   readonly decision: DecisionNode;
   readonly approvalClassification?: GraphOperationApprovalClassification;
+}
+
+export interface AddWorkItemGraphOperation {
+  readonly kind: "AddWorkItem";
+  readonly workItem: WorkItemNode;
+  readonly edges: readonly DependencyEdge[];
 }
 
 export interface GraphOperationFinding {
@@ -99,6 +120,14 @@ export function applyGraphOperationToCandidate(
     };
   }
 
+  if (operationClone.kind === "AddWorkItem") {
+    return {
+      status: "applied",
+      approval: approvalNotRequired(),
+      candidateGraph: addWorkItemToCandidateGraph(candidateGraph, operationClone)
+    };
+  }
+
   return {
     status: "rejected",
     errors: [
@@ -124,6 +153,10 @@ export function validateGraphOperation(
 
   if (operation.kind === "AddDecision") {
     return validateAddDecisionOperation(graph, operation);
+  }
+
+  if (operation.kind === "AddWorkItem") {
+    return validateAddWorkItemOperation(graph, operation);
   }
 
   return [
@@ -333,10 +366,47 @@ function validateAddDecisionOperation(graph: PlanningGraph, operation: AddDecisi
   return errors;
 }
 
+function validateAddWorkItemOperation(graph: PlanningGraph, operation: AddWorkItemGraphOperation): readonly GraphOperationFinding[] {
+  const workItem = operation.workItem;
+  const errors: GraphOperationFinding[] = [];
+
+  errors.push(...validateNodeId(graph, workItem, "wi", "Work Item", "AddWorkItem"));
+
+  if (workItem.kind !== "work_item") {
+    errors.push({
+      code: "work_item_kind_invalid",
+      message: "AddWorkItem can only add a work_item node.",
+      nodeId: workItem.id
+    });
+  }
+
+  if (!workItem.title.trim()) {
+    errors.push({
+      code: "work_item_title_required",
+      message: "AddWorkItem requires a non-empty title.",
+      nodeId: workItem.id
+    });
+  }
+
+  if (!["backlog", "ready", "in_progress", "review", "done", "cancelled", "deferred"].includes(workItem.executionState)) {
+    errors.push({
+      code: "work_item_execution_state_invalid",
+      message: "AddWorkItem execution state is not supported.",
+      nodeId: workItem.id
+    });
+  }
+
+  errors.push(...validateRequiredProvenance(workItem));
+  errors.push(...validateStrictWorkItemProposal(workItem));
+  errors.push(...validateWorkItemOperationEdges(graph, operation));
+
+  return errors;
+}
+
 function validateNodeId(
   graph: PlanningGraph,
   node: PlanningNode,
-  prefix: "req" | "dec" | "oq",
+  prefix: "req" | "dec" | "oq" | "wi",
   label: string,
   operationName: string
 ): readonly GraphOperationFinding[] {
@@ -368,6 +438,106 @@ function validateNodeId(
   }
 
   return errors;
+}
+
+function validateStrictWorkItemProposal(workItem: WorkItemNode): readonly GraphOperationFinding[] {
+  const errors: GraphOperationFinding[] = [];
+
+  if (workItem.acceptanceCriteria.filter((criterion) => criterion.trim()).length === 0) {
+    errors.push({
+      code: "work_item_acceptance_criteria_required",
+      message: "LLM-origin AddWorkItem proposals require at least one non-empty acceptance criterion.",
+      nodeId: workItem.id
+    });
+  }
+
+  if (!hasExecutableValidationMethod(workItem.validationMethods)) {
+    errors.push({
+      code: "work_item_executable_validation_required",
+      message: "LLM-origin AddWorkItem proposals require a command or test validation method with an explicit command.",
+      nodeId: workItem.id
+    });
+  }
+
+  if (!workItem.contextSummary?.trim()) {
+    errors.push({
+      code: "work_item_context_summary_required",
+      message: "LLM-origin AddWorkItem proposals require a context summary.",
+      nodeId: workItem.id
+    });
+  }
+
+  if ((workItem.boundaryNotes ?? []).filter((note) => note.trim()).length === 0) {
+    errors.push({
+      code: "work_item_boundary_notes_required",
+      message: "LLM-origin AddWorkItem proposals require boundary notes.",
+      nodeId: workItem.id
+    });
+  }
+
+  if (!workItem.safeFailureGuidance?.trim()) {
+    errors.push({
+      code: "work_item_safe_failure_guidance_required",
+      message: "LLM-origin AddWorkItem proposals require safe-failure guidance.",
+      nodeId: workItem.id
+    });
+  }
+
+  return errors;
+}
+
+function validateWorkItemOperationEdges(
+  graph: PlanningGraph,
+  operation: AddWorkItemGraphOperation
+): readonly GraphOperationFinding[] {
+  const errors: GraphOperationFinding[] = [];
+  const nodeById = new Map<string, PlanningNode>(graph.nodes.map((node) => [node.id, node]));
+
+  for (const edge of operation.edges) {
+    if (edge.source !== operation.workItem.id) {
+      errors.push({
+        code: "work_item_edge_source_invalid",
+        message: `AddWorkItem edges must start from the new Work Item: ${operation.workItem.id}`,
+        nodeId: operation.workItem.id
+      });
+    }
+
+    const target = nodeById.get(edge.target);
+    if (!target) {
+      errors.push({
+        code: "work_item_edge_target_missing",
+        message: `AddWorkItem edge target does not exist: ${edge.target}`,
+        nodeId: operation.workItem.id
+      });
+    }
+
+    if (!edge.rationale.trim()) {
+      errors.push({
+        code: "work_item_edge_rationale_required",
+        message: `AddWorkItem edge requires a non-empty rationale: ${edge.source} ${edge.type} ${edge.target}`,
+        nodeId: operation.workItem.id
+      });
+    }
+  }
+
+  const hasTraceability = operation.edges.some((edge) => {
+    const target = nodeById.get(edge.target);
+    return edge.source === operation.workItem.id && ["satisfies", "references"].includes(edge.type) && isRequirementOrAcceptedDecision(target);
+  });
+
+  if (!hasTraceability) {
+    errors.push({
+      code: "work_item_traceability_required",
+      message: "LLM-origin AddWorkItem proposals require traceability to at least one Requirement or accepted Decision.",
+      nodeId: operation.workItem.id
+    });
+  }
+
+  return errors;
+}
+
+function hasExecutableValidationMethod(methods: readonly ValidationMethod[]): boolean {
+  return methods.some((method) => (method.type === "command" || method.type === "test") && Boolean(method.command?.trim()));
 }
 
 function validateDecisionApprovalClassification(
@@ -461,6 +631,58 @@ function addNodeToCandidateGraph(candidateGraph: PlanningGraph, node: PlanningNo
   };
 }
 
+function addWorkItemToCandidateGraph(candidateGraph: PlanningGraph, operation: AddWorkItemGraphOperation): PlanningGraph {
+  const nextVersion = graphVersion(Number(candidateGraph.graphVersion) + 1);
+  const workItemWithoutAssertedReadiness: WorkItemNode = {
+    ...operation.workItem,
+    readinessSnapshot: {
+      graphVersion: nextVersion,
+      labels: ["agent_eligible"],
+      reasons: ["Readiness is derived during candidate graph application."]
+    }
+  };
+  const nextGraph: PlanningGraph = {
+    ...candidateGraph,
+    graphVersion: nextVersion,
+    nodes: [...candidateGraph.nodes, workItemWithoutAssertedReadiness],
+    edges: appendNewEdges(candidateGraph.edges, operation.edges)
+  };
+  const validation = validatePlanningGraph(nextGraph);
+  const derivedReadiness =
+    validation.readinessSnapshots[workItemWithoutAssertedReadiness.id] ??
+    deriveReadinessSnapshot(nextGraph, workItemWithoutAssertedReadiness);
+
+  return {
+    ...nextGraph,
+    nodes: nextGraph.nodes.map((node) =>
+      node.id === workItemWithoutAssertedReadiness.id && node.kind === "work_item"
+        ? { ...node, readinessSnapshot: derivedReadiness }
+        : node
+    )
+  };
+}
+
+function appendNewEdges(
+  existingEdges: readonly DependencyEdge[],
+  proposedEdges: readonly DependencyEdge[]
+): readonly DependencyEdge[] {
+  const edgeKeys = new Set(existingEdges.map(edgeKey));
+  const nextEdges = [...existingEdges];
+  for (const edge of proposedEdges) {
+    const key = edgeKey(edge);
+    if (!edgeKeys.has(key)) {
+      nextEdges.push(edge);
+      edgeKeys.add(key);
+    }
+  }
+
+  return nextEdges;
+}
+
+function edgeKey(edge: DependencyEdge): string {
+  return `${edge.source}\u0000${edge.type}\u0000${edge.target}\u0000${edge.rationale}`;
+}
+
 function approvalNotRequired(): GraphOperationApprovalSummary {
   return {
     required: false,
@@ -495,7 +717,15 @@ function nodeLabel(node: PlanningNode): string {
     return "Decision";
   }
 
+  if (node.kind === "work_item") {
+    return "Work Item";
+  }
+
   return node.kind.replace("_", " ");
+}
+
+function isRequirementOrAcceptedDecision(node: PlanningNode | undefined): boolean {
+  return node?.kind === "requirement" || (node?.kind === "decision" && node.status === "accepted");
 }
 
 function provenanceFields(provenance: Provenance): readonly { readonly name: string; readonly value: string }[] {
