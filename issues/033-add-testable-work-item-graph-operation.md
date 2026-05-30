@@ -29,6 +29,7 @@ As a Primary User, I want LLM-proposed Work Items to be rejected when they lack 
 - The operation should carry provenance so validation can distinguish LLM-origin proposals from other graph changes if needed.
 - Prefer command/test validation methods with explicit commands.
 - Keep semantic validation errors specific enough for an AFK agent or Primary User to fix the proposal.
+- Immutability mandate: candidate graph application must use strict deep-cloning or immutable structural sharing so dry-run operation application cannot mutate the canonical graph object in memory through leaked JavaScript references.
 
 ## Acceptance Criteria
 

@@ -29,6 +29,7 @@ As a maintainer, I want provider-specific LLM adapter code isolated under `src/a
 - Provider prompts and response parsing belong in adapters, not core.
 - Keep fixtures small and deterministic.
 - The acceptance path should remain: adapter proposal, application validation, graph operation pipeline.
+- Few-shot prompting prep: fixture parsing and adapter structure should allow documented Proposed Graph Operation JSON examples from Issue 041 to be injected directly into future LLM system prompts as few-shot examples without reformatting.
 
 ## Acceptance Criteria
 

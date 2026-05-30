@@ -29,6 +29,7 @@ As a Primary User, I want answers from a grilling session to become proposed Req
 - Keep approval classification deterministic and provider-independent.
 - Use existing Decision fields: selected option, rationale, rejected alternatives, unresolved questions, and status.
 - If adding JSON proposal fixtures, keep them small and deterministic.
+- Immutability mandate: candidate graph application must use strict deep-cloning or immutable structural sharing so dry-run operation application cannot mutate the canonical graph object in memory through leaked JavaScript references.
 
 ## Acceptance Criteria
 

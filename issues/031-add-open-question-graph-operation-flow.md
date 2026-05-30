@@ -30,6 +30,7 @@ As a Primary User, I want uncertain planning input to become explicit Open Quest
 - Keep proposal orchestration in `src/application/`.
 - Any adapter or CLI path should call the application use case, not core internals directly.
 - Use the ADR/RFC language: Proposed Graph Operations are untrusted until validated.
+- Immutability mandate: candidate graph application must use strict deep-cloning or immutable structural sharing so dry-run operation application cannot mutate the canonical graph object in memory through leaked JavaScript references.
 
 ## Acceptance Criteria
 

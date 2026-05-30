@@ -29,6 +29,7 @@ As a Primary User, I want to inspect proposed graph operations before applying t
 - Keep command naming consistent with the existing CLI style.
 - Dry-run JSON should be useful for agents and humans.
 - Change-log events should include operation type, graph version before/after, affected nodes, approval status, and provenance reference.
+- Approval ergonomics: approval must remain strictly non-interactive and file-based for AFK use. The CLI should reject unapproved operations and require either an explicit approved field in the proposal JSON, such as `"approved": true`, or a strict CLI approval flag before `--apply` succeeds.
 
 ## Acceptance Criteria
 

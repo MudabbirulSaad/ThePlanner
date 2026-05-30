@@ -27,6 +27,7 @@ As a Primary User, I want proposed graph operations to have a documented JSON sh
 - The operation schema validates proposal input; `planning/graph.schema.json` still validates canonical graph shape.
 - Keep examples deterministic and useful for AFK agents.
 - Avoid claiming unsupported operations are implemented.
+- Runtime vs static typing: use a strict parsing library such as Zod or TypeBox for the Proposed Graph Operation runtime validator instead of hand-rolled JSON checks. The operation union should provide both the runtime firewall for hallucinated LLM JSON and safe static TypeScript types for the application layer.
 
 ## Acceptance Criteria
 

@@ -28,6 +28,7 @@ As a Primary User, I want proposed dependencies and human-intervention gates to 
 - Follow current Dependency Edge direction: `source -> target` means the source has the relationship to the target.
 - Use existing validation rules for blocker cause links and HITL blocked Work Items.
 - Keep candidate graph application deterministic and side-effect free.
+- Immutability mandate: candidate graph application must use strict deep-cloning or immutable structural sharing so dry-run operation application cannot mutate the canonical graph object in memory through leaked JavaScript references.
 
 ## Acceptance Criteria
 
