@@ -1,6 +1,6 @@
-# AI Engineering Planner
+# ThePlanner
 
-AI Engineering Planner is a CLI-first TypeScript/Node tool for keeping repository planning artifacts aligned with a canonical Planning Graph. It turns planning state into deterministic Markdown projections, dependency views, readiness labels, validation output, and reconciliation reports.
+ThePlanner is a CLI-first TypeScript/Node tool for keeping repository planning artifacts aligned with a canonical Planning Graph. It turns planning state into deterministic Markdown projections, dependency views, readiness labels, validation output, and reconciliation reports.
 
 ## MVP Scope
 
@@ -21,23 +21,39 @@ External tracker live sync, live LLM calls, and autonomous execution are outside
 
 Requires Node.js 22 or newer.
 
+Install the published CLI:
+
+```sh
+npm install --global @mudabbirulsaad/theplanner
+theplanner init --json
+theplanner status --json
+```
+
+Run without installing globally:
+
+```sh
+npx @mudabbirulsaad/theplanner status --json
+```
+
+For local development from this repository:
+
 ```sh
 npm install
 npm run build
 ```
 
-The local binary is declared as `planner` and builds to `dist/src/adapters/cli/index.js`. During development, run it through npm's package bin workflow:
+The published binary is declared as `theplanner` and builds to `dist/src/adapters/cli/index.js`. During local development, run the built entry point directly:
 
 ```sh
-npm exec planner -- status --json
-npm exec planner -- validate --json
+node dist/src/adapters/cli/index.js status --json
+node dist/src/adapters/cli/index.js validate --json
 ```
 
 For a global local install without publishing to npm:
 
 ```sh
 npm install --global .
-planner status --json
+theplanner status --json
 ```
 
 Project defaults are read from `planner.config.json` when present. The default config preserves the repository layout:
@@ -63,6 +79,8 @@ Use `--config <file>` to load a different config file. `planningDirectory` remap
 ## Scripts
 
 - `npm run build`: compile TypeScript.
+- `npm run prepack`: build before packing the npm tarball.
+- `npm run prepublishOnly`: run the full check before npm publish.
 - `npm test`: run Vitest.
 - `npm run test:watch`: run Vitest in watch mode.
 - `npm run lint`: run ESLint, including dependency-boundary checks.
@@ -72,29 +90,29 @@ Use `--config <file>` to load a different config file. `planningDirectory` remap
 
 ## CLI Commands
 
-Use the package binary during development:
+Use the installed package binary:
 
 ```sh
-npm exec planner -- init --json
-npm exec planner -- status --json
-npm exec planner -- validate --json
-npm exec planner -- export --dry-run --json
-npm exec planner -- export --apply --json
-npm exec planner -- intake questions --from planning/intake/idea.md --json
-npm exec planner -- intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
-npm exec planner -- plan --from planning/intake/refined-brief.md --dry-run --json
-npm exec planner -- plan --from planning/intake/refined-brief.md --apply --json
-npm exec planner -- reconcile --json
-npm exec planner -- reconcile --apply --json
-npm exec planner -- prepare wi-001 --agent codex --dry-run --json
-npm exec planner -- prepare wi-001 --agent codex --apply --json
-npm exec planner -- run wi-001 --agent codex --json
-npm exec planner -- run wi-001 --agent claude --json
-npm exec planner -- run wi-001 --agent gemini --json
-npm exec planner -- run review run-YYYYMMDD-HHMMSS-wi-001 --json
-npm exec planner -- run accept run-YYYYMMDD-HHMMSS-wi-001 --json
-npm exec planner -- run reject run-YYYYMMDD-HHMMSS-wi-001 --json
-npm exec planner -- sync github --dry-run --json
+theplanner init --json
+theplanner status --json
+theplanner validate --json
+theplanner export --dry-run --json
+theplanner export --apply --json
+theplanner intake questions --from planning/intake/idea.md --json
+theplanner intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
+theplanner plan --from planning/intake/refined-brief.md --dry-run --json
+theplanner plan --from planning/intake/refined-brief.md --apply --json
+theplanner reconcile --json
+theplanner reconcile --apply --json
+theplanner prepare wi-001 --agent codex --dry-run --json
+theplanner prepare wi-001 --agent codex --apply --json
+theplanner run wi-001 --agent codex --json
+theplanner run wi-001 --agent claude --json
+theplanner run wi-001 --agent gemini --json
+theplanner run review run-YYYYMMDD-HHMMSS-wi-001 --json
+theplanner run accept run-YYYYMMDD-HHMMSS-wi-001 --json
+theplanner run reject run-YYYYMMDD-HHMMSS-wi-001 --json
+theplanner sync github --dry-run --json
 ```
 
 Command behavior:
@@ -119,6 +137,19 @@ Command behavior:
 
 Commands do not prompt unless future interactive behavior is explicitly requested with `--interactive`.
 
+## Publishing
+
+The npm package publishes as `@mudabbirulsaad/theplanner` and installs the `theplanner` command.
+
+```sh
+npm whoami
+npm run check
+npm pack --dry-run
+npm publish --access public
+```
+
+Before publishing a new version, confirm the package name and version with `npm view @mudabbirulsaad/theplanner version`. A first publish should return npm `E404` before `npm publish`.
+
 ## Schema Version Policy
 
 V1 supports Planning Graph `schema_version` value `0.1.0` only. Runtime JSON Schema validation pins this value before semantic validation runs, and core validation also reports unsupported versions when called directly.
@@ -127,7 +158,7 @@ Unsupported versions fail validation with a clear error. V1 does not provide gra
 
 ## Agent Runner Commands
 
-`planner run` is a local process runner only. It sends the generated prompt to the selected command on stdin and sets `PLANNER_AGENT`, `PLANNER_RUN_ID`, `PLANNER_WORK_ITEM_ID`, and `PLANNER_RUN_DIRECTORY` in the child process environment.
+`theplanner run` is a local process runner only. It sends the generated prompt to the selected command on stdin and sets `PLANNER_AGENT`, `PLANNER_RUN_ID`, `PLANNER_WORK_ITEM_ID`, and `PLANNER_RUN_DIRECTORY` in the child process environment.
 
 Default commands:
 
@@ -145,9 +176,9 @@ For a concise walkthrough, see [docs/demo.md](docs/demo.md).
 
 ```sh
 npm run build
-npm exec planner -- status --json
-npm exec planner -- validate --json
-npm exec planner -- reconcile --json
+node dist/src/adapters/cli/index.js status --json
+node dist/src/adapters/cli/index.js validate --json
+node dist/src/adapters/cli/index.js reconcile --json
 npm run check
 ```
 
@@ -155,9 +186,9 @@ The repository root now starts with a minimal starter `planning/graph.json`. The
 
 ```sh
 cd examples/ai-engineering-planner-v1
-npm exec --prefix ../.. planner -- status --json
-npm exec --prefix ../.. planner -- validate --json
-npm exec --prefix ../.. planner -- reconcile --json
+node ../../dist/src/adapters/cli/index.js status --json
+node ../../dist/src/adapters/cli/index.js validate --json
+node ../../dist/src/adapters/cli/index.js reconcile --json
 ```
 
 If `reconcile --json` returns `proposedPatches`, review them before using `--apply`. `unsupportedProjectionEdits` are richer Markdown fields or sections that V1 preserves as manual intent but does not ingest as canonical graph truth. They are not failures by themselves.
@@ -177,10 +208,10 @@ The repository follows Hexagonal Architecture:
 
 ## Known V1 Limitations
 
-- `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
+- `theplanner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
 - Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. V1 supports only `schema_version: "0.1.0"` and reports unsupported versions instead of migrating them.
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is limited to `sync github --dry-run --json`; live external issue creation and credentialed tracker APIs are deferred.
 - LLM cloud API adapters and live provider calls are not implemented.
-- `planner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
+- `theplanner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
 - Validation commands are executed directly as argv-style process commands. Shell operators such as `&&` require an explicit shell command wrapper.

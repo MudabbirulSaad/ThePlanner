@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is the AI Engineering Planner: a CLI-first TypeScript/Node tool that turns an Intake Brief into a Planning Graph, projections, Work Items, dependency views, and readiness labels. Use Hexagonal Architecture from the start:
+This repository is ThePlanner: a CLI-first TypeScript/Node tool that turns an Intake Brief into a Planning Graph, projections, Work Items, dependency views, and readiness labels. Use Hexagonal Architecture from the start:
 
 - `src/core/`: pure domain logic for graph types, validation, readiness, projection rendering, reconciliation, and shared types.
 - `src/application/`: use cases and ports for graph storage, projection IO, CLI orchestration, and change-log writing.

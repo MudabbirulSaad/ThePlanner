@@ -4,7 +4,7 @@ Source idea: planning/intake/idea.md
 
 ## Product Summary
 
-Build a CLI-first AI Engineering Planner that turns a refined brief into a repository-native Planning Graph.
+Build a CLI-first ThePlanner workflow that turns a refined brief into a repository-native Planning Graph.
 
 ## Users
 

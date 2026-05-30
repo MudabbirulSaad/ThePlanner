@@ -107,7 +107,7 @@ describe("planner CLI use case wiring", () => {
       trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
     });
 
-    expectJsonError(result, "planner sync requires --dry-run; live sync is deferred");
+    expectJsonError(result, "theplanner sync requires --dry-run; live sync is deferred");
   });
 
   it("rejects tracker sync apply because external mutation is deferred", async () => {
@@ -117,7 +117,7 @@ describe("planner CLI use case wiring", () => {
       trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()]
     });
 
-    expectJsonError(result, "planner sync --apply is deferred; use --dry-run to preview tracker payloads");
+    expectJsonError(result, "theplanner sync --apply is deferred; use --dry-run to preview tracker payloads");
   });
 
   it("returns JSON error envelopes for argument errors", async () => {
@@ -127,7 +127,7 @@ describe("planner CLI use case wiring", () => {
       refinedBriefReader: new FileRefinedBriefReader()
     });
 
-    expectJsonError(result, "planner plan requires --from <file>");
+    expectJsonError(result, "theplanner plan requires --from <file>");
   });
 
   it("returns JSON error envelopes for service-wiring errors", async () => {
@@ -136,7 +136,7 @@ describe("planner CLI use case wiring", () => {
       projectionWriter: { writeAll: async () => undefined }
     });
 
-    expectJsonError(result, "planner init requires a workspace initializer");
+    expectJsonError(result, "theplanner init requires a workspace initializer");
   });
 
   it("uses configured default agent and validation command defaults", async () => {
@@ -342,7 +342,7 @@ describe("planner CLI use case wiring", () => {
 
       const graphJson = JSON.parse(await readFile("planning/graph.json", "utf8"));
       expect(JSON.parse(await readFile("planning/graph.schema.json", "utf8"))).toMatchObject({
-        title: "AI Engineering Planner Graph"
+        title: "ThePlanner Graph"
       });
       expect(validatePlanningGraph(parsePlanningGraphJson(graphJson)).status).toBe("pass");
       expect(await readFile("planning/intake/idea.md", "utf8")).toContain("## Target Users");

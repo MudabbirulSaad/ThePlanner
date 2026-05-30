@@ -1,20 +1,43 @@
 {
-  "name": "ai-engineering-planner",
+  "name": "@mudabbirulsaad/theplanner",
   "version": "0.1.0",
-  "description": "CLI-first AI Engineering Planner for canonical Planning Graph artifacts.",
+  "description": "CLI-first planning graph tool for repository-native engineering plans.",
   "type": "module",
+  "packageManager": "npm@11.16.0",
+  "license": "MIT",
+  "author": "Mudabbirul Saad",
+  "homepage": "https://github.com/MudabbirulSaad/ThePlanner#readme",
+  "bugs": {
+    "url": "https://github.com/MudabbirulSaad/ThePlanner/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MudabbirulSaad/ThePlanner.git"
+  },
+  "keywords": [
+    "planning",
+    "cli",
+    "planning-graph",
+    "ai-engineering",
+    "work-items",
+    "agents"
+  ],
   "files": [
     "dist/src",
     "README.md",
-    "planner.config.json",
-    "planning/graph.json",
-    "planning/graph.schema.json"
+    "LICENSE",
+    "docs"
   ],
   "bin": {
-    "planner": "dist/src/adapters/cli/index.js"
+    "theplanner": "dist/src/adapters/cli/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",

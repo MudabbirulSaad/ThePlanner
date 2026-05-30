@@ -60,7 +60,7 @@ export function renderWorkItemProjection(graph: PlanningGraph, workItem: WorkIte
       blocks: inlineList(blocks),
       requirements: inlineList(requirements),
       hitl_gates: "[]"
-    })}\n# ${workItem.title}\n\n## Context\n\n${workItem.title} supports the V1 AI Engineering Planner implementation.\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\nKeep implementation inside this Work Item's accepted slice.\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\nNone.\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
+    })}\n# ${workItem.title}\n\n## Context\n\n${workItem.title} supports ThePlanner V1 implementation.\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\nKeep implementation inside this Work Item's accepted slice.\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\nNone.\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
   };
 }
 

@@ -1,7 +1,7 @@
 export const graphSchemaTemplate = `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/ai-engineering-planner/graph.schema.json",
-  "title": "AI Engineering Planner Graph",
+  "title": "ThePlanner Graph",
   "type": "object",
   "required": ["schema_version", "graph_version", "nodes", "edges"],
   "properties": {

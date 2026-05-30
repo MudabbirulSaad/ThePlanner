@@ -106,7 +106,7 @@ describe("agent runner registry", () => {
       stderr: "Not logged in\n",
       error: {
         code: "runner_auth_failed",
-        message: "Codex auth check failed. Run \"codex login\" before planner run."
+        message: "Codex auth check failed. Run \"codex login\" before theplanner run."
       }
     });
   });

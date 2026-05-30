@@ -1,6 +1,6 @@
-# AI Engineering Planner
+# ThePlanner
 
-The AI Engineering Planner turns rough product or engineering ideas into implementation-ready planning artifacts for human engineers and coding agents.
+ThePlanner turns rough product or engineering ideas into implementation-ready planning artifacts for human engineers and coding agents.
 
 ## Language
 
@@ -267,14 +267,14 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 - If repo context contradicts the **Intake Brief**, the planner creates an **Open Question**, **Assumption**, **Risk**, or **HITL Gate** instead of silently choosing one source.
 - The MVP uses a **CLI-first Interface** backed by a reusable core library for graph modeling, validation, projection rendering, reconciliation, and export logic.
 - The **CLI-first Interface** is agent-invocable so tools such as Codex, Claude Code, Gemini CLI, or similar coding agents can run planner commands and consume generated artifacts.
-- Autonomous code execution by coding agents is outside V1; the planner prepares artifacts and commands for agents to consume later.
+- Autonomous code execution by coding agents is outside V1; ThePlanner prepares artifacts and commands for agents to consume later.
 - V1 uses the **TypeScript/Node Stack** for the CLI, core planner library, typed graph models, validation rules, projection rendering, reconciliation, and tests.
 - The **TypeScript/Node Stack** may use commander or clipanion, zod or TypeBox, JSON Schema generation, ajv, vitest, gray-matter, and prettier.
 - Type safety reduces implementation mistakes but does not replace JSON Schema validation or semantic **Graph Validation** at graph boundaries.
-- V1 CLI commands are `planner plan --brief <file>`, `planner validate`, `planner export`, `planner reconcile`, and `planner status`.
+- V1 CLI commands are `theplanner plan --brief <file>`, `theplanner validate`, `theplanner export`, `theplanner reconcile`, and `theplanner status`.
 - CLI commands support `--json`, deterministic file paths, non-zero exit codes for validation errors, and no interactive prompts unless `--interactive` is passed.
 - Graph mutations after reconciliation require explicit `--apply`.
-- `planner plan --brief <file> --interactive` may stream progress and **Structured Clarification** prompts, but canonical graph mutations still require explicit confirmation when needed.
+- `theplanner plan --brief <file> --interactive` may stream progress and **Structured Clarification** prompts, but canonical graph mutations still require explicit confirmation when needed.
 - The system uses **Hexagonal Architecture** so the core planner is independent from the CLI, filesystem, Git, LLM provider, **Repo Scan**, JSON Schema validation, and future web/editor/tracker integrations.
 - The core domain contains the **Planning Graph**, nodes, edges, validation rules, readiness calculation, projection generation, and reconciliation logic.
 - Adapters handle CLI input/output, file writing, Git, LLM calls, **Repo Scan**, JSON Schema validation, and future GitHub/Linear/Jira sync.
@@ -440,7 +440,7 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 > **Dev:** "Can the planner rewrite code during repository analysis?"
 > **Domain expert:** "No — a V1 **Repo Scan** is explicit, scoped, and read-only."
 >
-> **Dev:** "Does CLI-first mean the planner runs coding agents?"
+> **Dev:** "Does CLI-first mean ThePlanner runs coding agents?"
 > **Domain expert:** "No — the **CLI-first Interface** must be agent-invocable, but autonomous code execution is outside V1."
 >
 > **Dev:** "Does TypeScript mean we can skip graph validation?"

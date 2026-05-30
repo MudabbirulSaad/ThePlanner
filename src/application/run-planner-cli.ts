@@ -98,10 +98,10 @@ export async function runPlannerCli(
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun && apply) {
-      return fail("planner export accepts only one of --dry-run or --apply", json);
+      return fail("theplanner export accepts only one of --dry-run or --apply", json);
     }
     if (dryRun && !services.projectionReader) {
-      return fail("planner export --dry-run requires a projection reader", json);
+      return fail("theplanner export --dry-run requires a projection reader", json);
     }
 
     try {
@@ -119,7 +119,7 @@ export async function runPlannerCli(
 
   if (command === "init") {
     if (!services.workspaceInitializer) {
-      return fail("planner init requires a workspace initializer", json);
+      return fail("theplanner init requires a workspace initializer", json);
     }
 
     const result = await initWorkspaceUseCase(services.workspaceInitializer);
@@ -129,12 +129,12 @@ export async function runPlannerCli(
   if (command === "intake") {
     if (rest[0] === "questions") {
       if (!services.intakeIdeaReader) {
-        return fail("planner intake questions requires an intake idea reader", json);
+        return fail("theplanner intake questions requires an intake idea reader", json);
       }
 
       const from = readOption(rest, "--from");
       if (!from) {
-        return fail("planner intake questions requires --from <file>", json);
+        return fail("theplanner intake questions requires --from <file>", json);
       }
 
       try {
@@ -147,21 +147,21 @@ export async function runPlannerCli(
 
     if (rest[0] === "refine") {
       if (!services.intakeIdeaReader) {
-        return fail("planner intake refine requires an intake idea reader", json);
+        return fail("theplanner intake refine requires an intake idea reader", json);
       }
 
       if (!services.refinedBriefWriter) {
-        return fail("planner intake refine requires a refined brief writer", json);
+        return fail("theplanner intake refine requires a refined brief writer", json);
       }
 
       const from = readOption(rest, "--from");
       if (!from) {
-        return fail("planner intake refine requires --from <file>", json);
+        return fail("theplanner intake refine requires --from <file>", json);
       }
 
       const out = readOption(rest, "--out");
       if (!out) {
-        return fail("planner intake refine requires --out <file>", json);
+        return fail("theplanner intake refine requires --out <file>", json);
       }
 
       try {
@@ -178,23 +178,23 @@ export async function runPlannerCli(
       }
     }
 
-    return fail("planner intake requires the questions or refine subcommand", json);
+    return fail("theplanner intake requires the questions or refine subcommand", json);
   }
 
   if (command === "plan") {
     if (!services.refinedBriefReader) {
-      return fail("planner plan requires a refined brief reader", json);
+      return fail("theplanner plan requires a refined brief reader", json);
     }
 
     const from = readOption(rest, "--from");
     if (!from) {
-      return fail("planner plan requires --from <file>", json);
+      return fail("theplanner plan requires --from <file>", json);
     }
 
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun === apply) {
-      return fail("planner plan requires exactly one of --dry-run or --apply", json);
+      return fail("theplanner plan requires exactly one of --dry-run or --apply", json);
     }
 
     try {
@@ -217,7 +217,7 @@ export async function runPlannerCli(
 
   if (command === "reconcile") {
     if (!services.projectionReader) {
-      return fail("planner reconcile requires a projection reader", json);
+      return fail("theplanner reconcile requires a projection reader", json);
     }
 
     try {
@@ -236,7 +236,7 @@ export async function runPlannerCli(
   if (command === "sync") {
     const tracker = rest[0];
     if (!tracker || tracker.startsWith("--")) {
-      return fail("planner sync requires <tracker>", json);
+      return fail("theplanner sync requires <tracker>", json);
     }
 
     if (!isSupportedTracker(tracker)) {
@@ -244,16 +244,16 @@ export async function runPlannerCli(
     }
 
     if (rest.includes("--apply")) {
-      return fail("planner sync --apply is deferred; use --dry-run to preview tracker payloads", json);
+      return fail("theplanner sync --apply is deferred; use --dry-run to preview tracker payloads", json);
     }
 
     if (!rest.includes("--dry-run")) {
-      return fail("planner sync requires --dry-run; live sync is deferred", json);
+      return fail("theplanner sync requires --dry-run; live sync is deferred", json);
     }
 
     const trackerAdapter = services.trackerSyncAdapters?.find((adapter) => adapter.tracker === tracker);
     if (!trackerAdapter) {
-      return fail(`planner sync ${tracker} requires a tracker sync adapter`, json);
+      return fail(`theplanner sync ${tracker} requires a tracker sync adapter`, json);
     }
 
     try {
@@ -269,27 +269,27 @@ export async function runPlannerCli(
 
   if (command === "prepare") {
     if (!services.contextFileReader) {
-      return fail("planner prepare requires a context file reader", json);
+      return fail("theplanner prepare requires a context file reader", json);
     }
 
     const workItemId = rest[0];
     if (!workItemId || workItemId.startsWith("--")) {
-      return fail("planner prepare requires <work-item-id>", json);
+      return fail("theplanner prepare requires <work-item-id>", json);
     }
 
     const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
-      return fail("planner prepare requires --agent <codex|claude|gemini>", json);
+      return fail("theplanner prepare requires --agent <codex|claude|gemini>", json);
     }
 
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
     if (dryRun === apply) {
-      return fail("planner prepare requires exactly one of --dry-run or --apply", json);
+      return fail("theplanner prepare requires exactly one of --dry-run or --apply", json);
     }
 
     if (apply && !services.runArtifactWriter) {
-      return fail("planner prepare --apply requires an agent run artifact writer", json);
+      return fail("theplanner prepare --apply requires an agent run artifact writer", json);
     }
 
     try {
@@ -312,12 +312,12 @@ export async function runPlannerCli(
   if (command === "run") {
     if (rest[0] === "review" || rest[0] === "accept" || rest[0] === "reject") {
       if (!services.runArtifactReader) {
-        return fail(`planner run ${rest[0]} requires an agent run artifact reader`, json);
+        return fail(`theplanner run ${rest[0]} requires an agent run artifact reader`, json);
       }
 
       const runId = rest[1];
       if (!runId || runId.startsWith("--")) {
-        return fail(`planner run ${rest[0]} requires <run-id>`, json);
+        return fail(`theplanner run ${rest[0]} requires <run-id>`, json);
       }
 
       try {
@@ -331,7 +331,7 @@ export async function runPlannerCli(
         }
 
         if (!services.changeLogWriter) {
-          return fail(`planner run ${rest[0]} requires a planning change log writer`, json);
+          return fail(`theplanner run ${rest[0]} requires a planning change log writer`, json);
         }
 
         const result = await decideAgentRunUseCase({
@@ -349,29 +349,29 @@ export async function runPlannerCli(
     }
 
     if (!services.contextFileReader) {
-      return fail("planner run requires a context file reader", json);
+      return fail("theplanner run requires a context file reader", json);
     }
 
     if (!services.runArtifactWriter) {
-      return fail("planner run requires an agent run artifact writer", json);
+      return fail("theplanner run requires an agent run artifact writer", json);
     }
 
     if (!services.agentRunner) {
-      return fail("planner run requires an agent runner", json);
+      return fail("theplanner run requires an agent runner", json);
     }
 
     if (!services.validationCommandRunner) {
-      return fail("planner run requires a validation command runner", json);
+      return fail("theplanner run requires a validation command runner", json);
     }
 
     const workItemId = rest[0];
     if (!workItemId || workItemId.startsWith("--")) {
-      return fail("planner run requires <work-item-id>", json);
+      return fail("theplanner run requires <work-item-id>", json);
     }
 
     const agent = readOption(rest, "--agent") ?? services.defaultAgent;
     if (!agent) {
-      return fail("planner run requires --agent <codex|claude|gemini>", json);
+      return fail("theplanner run requires --agent <codex|claude|gemini>", json);
     }
 
     try {
@@ -398,7 +398,7 @@ export async function runPlannerCli(
 
   return {
     exitCode: 0,
-    stdout: "planner CLI scaffold\n",
+    stdout: "theplanner CLI scaffold\n",
     stderr: ""
   };
 }
@@ -426,7 +426,7 @@ function renderError(error: unknown, json: boolean): PlannerCliResult {
 
 function requireChangeLogWriter(changeLogWriter: ChangeLogWriter | undefined): ChangeLogWriter {
   if (!changeLogWriter) {
-    throw new Error("planner plan --apply requires a planning change log writer");
+    throw new Error("theplanner plan --apply requires a planning change log writer");
   }
 
   return changeLogWriter;

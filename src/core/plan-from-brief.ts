@@ -58,7 +58,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
   const provenance: Provenance = {
     sourceType: "planner_inference",
     sourceReference,
-    createdBy: "planner plan --dry-run",
+    createdBy: "theplanner plan --dry-run",
     confidence: "medium"
   };
   const scaffoldedFields: string[] = [];

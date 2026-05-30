@@ -708,7 +708,7 @@ export async function planFromBriefApplyUseCase(args: {
     operationType: "graph_creation_from_brief",
     approvalStatus: "applied",
     summary: `Created planning graph from refined brief ${args.fromPath}.`,
-    provenanceReference: `planner plan --from ${args.fromPath} --apply`
+    provenanceReference: `theplanner plan --from ${args.fromPath} --apply`
   });
 
   await args.changeLogWriter.append(event);
@@ -783,7 +783,7 @@ export async function reconcileGraphUseCase(args: {
     operationType: "reconciliation_apply",
     approvalStatus: "applied",
     summary: `Applied ${reconciliation.proposedPatches.length} safe reconciliation patch(es).`,
-    provenanceReference: "planner reconcile --apply"
+    provenanceReference: "theplanner reconcile --apply"
   });
 
   await args.changeLogWriter.append(event);
@@ -836,7 +836,7 @@ export async function prepareAgentContextBundleUseCase(args: {
 
   if (args.apply) {
     if (!args.runArtifactWriter) {
-      throw new Error("planner prepare --apply requires an agent run artifact writer");
+      throw new Error("theplanner prepare --apply requires an agent run artifact writer");
     }
 
     const generatedAt = args.timestamp ?? new Date().toISOString();
@@ -1436,12 +1436,12 @@ function renderAgentContextBundle(args: {
       ? [
           "## Manual Use",
           "",
-          `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from planner prepare.`
+          `Paste this full bundle into ${agentDisplayName(args.agent)}. Do not execute an autonomous agent from theplanner prepare.`
         ]
       : [
           "## Run Instructions",
           "",
-          `You are being invoked by planner run as ${agentDisplayName(args.agent)}. Complete the selected Work Item only, then stop.`
+          `You are being invoked by theplanner run as ${agentDisplayName(args.agent)}. Complete the selected Work Item only, then stop.`
         ];
 
   return [

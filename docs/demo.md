@@ -1,6 +1,6 @@
 # Demo Guide
 
-This demo shows the V1 MVP loop for the AI Engineering Planner: canonical Planning Graph, Markdown-first projections, validation, reconciliation, and planning change-log support.
+This demo shows the V1 MVP loop for ThePlanner: canonical Planning Graph, Markdown-first projections, validation, reconciliation, and planning change-log support.
 
 ## Commands
 
@@ -52,7 +52,7 @@ The planning change log at `planning/change-log.ndjson` records graph-changing e
 
 - No live LLM calls.
 - No external tracker sync.
-- No autonomous multi-agent execution. `planner run` can invoke Codex explicitly for one Work Item, then human review is still required through saved run artifacts and accept/reject audit events.
-- `planner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs are deferred.
+- No autonomous multi-agent execution. `theplanner run` can invoke Codex explicitly for one Work Item, then human review is still required through saved run artifacts and accept/reject audit events.
+- `theplanner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs are deferred.
 - CLI validation runs JSON Schema validation before semantic validation; semantic validation is skipped when schema validation fails.
 - Reconciliation supports safe V1 fields and reports richer Markdown sections or unsupported relationships as `unsupportedProjectionEdits`.

@@ -141,7 +141,7 @@ describe("run agent use case", () => {
     expect(runner.input?.prompt).toContain("# Agent Context Bundle");
     expect(runner.input?.prompt).toContain("## Run Instructions");
     expect(runner.input?.prompt).toContain("Work Item: wi-001 - Run Codex");
-    expect(runner.input?.prompt).not.toContain("Do not execute an autonomous agent from planner prepare.");
+    expect(runner.input?.prompt).not.toContain("Do not execute an autonomous agent from theplanner prepare.");
     expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/prompt.md")).toContain("# Agent Context Bundle");
     expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/runner-stdout.log")).toBe("ok\n");
     expect(writer.files.get("planning/runs/run-20260529-123456-wi-001/validation-stdout.log")).toBe("tests passed\n");

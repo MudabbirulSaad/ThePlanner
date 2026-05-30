@@ -14,7 +14,7 @@ hitl_gates: []
 
 ## Context
 
-Implement graph validation and readiness derivation supports the V1 AI Engineering Planner implementation.
+Implement graph validation and readiness derivation supports ThePlanner V1 implementation.
 
 ## Desired Outcome
 

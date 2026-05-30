@@ -132,7 +132,7 @@ async function runAuthCheck(args: {
     ...result,
     error: {
       code: "runner_auth_failed",
-      message: `${args.displayName} auth check failed. Run "codex login" before planner run.`
+      message: `${args.displayName} auth check failed. Run "codex login" before theplanner run.`
     }
   };
 }

@@ -48,7 +48,7 @@ describe("init workspace use case", () => {
           enum: ["0.1.0"]
         }
       },
-      title: "AI Engineering Planner Graph"
+      title: "ThePlanner Graph"
     });
     expect(JSON.parse(initializer.files.get("planning/graph.json") ?? "{}")).toMatchObject({
       schema_version: "0.1.0",
