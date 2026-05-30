@@ -145,8 +145,54 @@ function renderRfcBody(graph: PlanningGraph): string {
 }
 
 function renderArchitectureBody(graph: PlanningGraph): string {
-  const components = graph.nodes.filter(isComponent);
-  return `## Components\n\n${list(components.map((node) => renderComponent(node)))}\n\n## Architecture Boundary\n\nCore remains independent from CLI and infrastructure adapters.\n`;
+  const components = graph.nodes.filter(isComponent).sort(compareById);
+  const constraints = graph.productIntent?.constraints ?? [];
+  const risks = graph.nodes.filter(isRisk).sort(compareById);
+  const openQuestions = graph.nodes.filter(isOpenQuestion).sort(compareById);
+  const workItems = graph.nodes.filter(isWorkItem).sort(compareById);
+
+  return `## Overview
+
+${renderArchitectureOverview(graph)}
+
+## Components
+
+${list(components.map((node) => renderComponent(node)))}
+
+## Interfaces / Contracts
+
+${list(components.map((node) => renderComponentInterfaces(node)))}
+
+## Dependency Notes
+
+${list(renderArchitectureDependencies(graph, components))}
+
+## Constraints
+
+${list([
+    ...constraints.map((constraint) => `Product constraint: ${trimSentence(constraint)}.`),
+    ...components.flatMap((component) =>
+      component.constraints.map((constraint) => `${component.id}: ${trimSentence(constraint)}.`)
+    )
+  ])}
+
+## Risks
+
+${list([
+    ...risks.map(renderRisk),
+    ...components.flatMap((component) =>
+      component.risks.map((risk) => `${component.id}: ${trimSentence(risk)}.`)
+    )
+  ])}
+
+## Open Questions
+
+${list(openQuestions.map(renderOpenQuestion))}
+
+## Work Item Traceability
+
+${list(workItems.map((node) => renderArchitectureWorkItemTrace(graph, node)))}
+`;
 }
 
 function renderDependencyView(graph: PlanningGraph, document: DocumentProjectionNode): string {
@@ -207,17 +253,69 @@ function renderRisk(node: RiskNode): string {
 }
 
 function renderComponent(node: ComponentNode): string {
-  const interfaces = node.interfaces.length === 0
-    ? "Interfaces: none."
-    : `Interfaces: ${node.interfaces
-        .map((componentInterface) => `${componentInterface.name} (${componentInterface.direction}) - ${trimSentence(componentInterface.contract)}`)
-        .join("; ")}.`;
   const dependencies = node.dependsOn.length === 0
     ? "Depends on: none."
     : `Depends on: ${node.dependsOn.map((id) => `\`${id}\``).join(", ")}.`;
-  const constraints = node.constraints.length === 0 ? "" : ` Constraints: ${node.constraints.map(trimSentence).join("; ")}.`;
-  const risks = node.risks.length === 0 ? "" : ` Risks: ${node.risks.map(trimSentence).join("; ")}.`;
-  return `${node.id}: ${node.title}. Responsibility: ${node.responsibility} ${interfaces} ${dependencies}${constraints}${risks}`;
+  return `${node.id}: ${node.title}. Responsibility: ${node.responsibility} ${dependencies}`;
+}
+
+function renderArchitectureOverview(graph: PlanningGraph): string {
+  const summary = graph.productIntent?.summary;
+  if (summary) {
+    return `${summary}\n\nSource graph: \`planning/graph.json\`. Graph version: ${graph.graphVersion}.`;
+  }
+
+  return `No product summary recorded.\n\nSource graph: \`planning/graph.json\`. Graph version: ${graph.graphVersion}.`;
+}
+
+function renderComponentInterfaces(node: ComponentNode): string {
+  if (node.interfaces.length === 0) {
+    return `${node.id}: None.`;
+  }
+
+  return `${node.id}: ${node.interfaces
+    .map(
+      (componentInterface) =>
+        `${componentInterface.name} (${componentInterface.direction}) - ${trimSentence(componentInterface.contract)}`
+    )
+    .join("; ")}.`;
+}
+
+function renderArchitectureDependencies(
+  graph: PlanningGraph,
+  components: readonly ComponentNode[]
+): readonly string[] {
+  const componentDependencyNotes = components.flatMap((component) =>
+    component.dependsOn.map((dependency) => `${component.id} depends on ${dependency} (component dependency).`)
+  );
+  const componentIds = new Set(components.map((component) => component.id));
+  const graphDependencyNotes = graph.edges
+    .filter((edge) => edge.type === "depends_on")
+    .filter((edge) => componentIds.has(edge.source as ComponentNode["id"]) || componentIds.has(edge.target as ComponentNode["id"]))
+    .sort((left, right) => `${left.source}:${left.target}`.localeCompare(`${right.source}:${right.target}`))
+    .map(
+      (edge) =>
+        `${edge.source} depends on ${edge.target} (graph edge). Rationale: ${
+          edge.rationale ? trimSentence(edge.rationale) : "None"
+        }.`
+    );
+
+  return [...componentDependencyNotes, ...graphDependencyNotes];
+}
+
+function renderArchitectureWorkItemTrace(graph: PlanningGraph, workItem: WorkItemNode): string {
+  const relatedComponents = graph.edges
+    .filter(
+      (edge) =>
+        edge.type === "references" &&
+        (edge.source === workItem.id || edge.target === workItem.id)
+    )
+    .map((edge) => (edge.source === workItem.id ? edge.target : edge.source))
+    .filter((id) => graph.nodes.some((node) => node.kind === "component" && node.id === id))
+    .sort();
+  const componentText =
+    relatedComponents.length === 0 ? "none" : relatedComponents.map((id) => `\`${id}\``).join(", ");
+  return `${workItem.id}: [${workItem.title}](${renderWorkItemProjection(graph, workItem).path}). Components: ${componentText}. Readiness: ${workItem.readinessSnapshot.labels.join(", ")}.`;
 }
 
 function trimSentence(value: string): string {
@@ -267,4 +365,8 @@ function isRisk(node: PlanningNode): node is RiskNode {
 
 function isComponent(node: PlanningNode): node is ComponentNode {
   return node.kind === "component";
+}
+
+function compareById(left: PlanningNode, right: PlanningNode): number {
+  return left.id.localeCompare(right.id);
 }
