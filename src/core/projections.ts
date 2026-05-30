@@ -1,8 +1,12 @@
 import type {
+  AssumptionNode,
   DependencyEdge,
   DocumentProjectionNode,
+  OpenQuestionNode,
   PlanningGraph,
   PlanningNode,
+  RequirementNode,
+  RiskNode,
   WorkItemNode
 } from "./graph.js";
 
@@ -13,12 +17,17 @@ export interface RenderedProjection {
 
 export function renderAllProjections(graph: PlanningGraph): readonly RenderedProjection[] {
   return [
-    ...graph.nodes.filter(isDocumentProjection).map((document) => renderDocumentProjection(graph, document)),
+    ...graph.nodes
+      .filter(isDocumentProjection)
+      .map((document) => renderDocumentProjection(graph, document)),
     ...graph.nodes.filter(isWorkItem).map((workItem) => renderWorkItemProjection(graph, workItem))
   ].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function renderDocumentProjection(graph: PlanningGraph, document: DocumentProjectionNode): RenderedProjection {
+export function renderDocumentProjection(
+  graph: PlanningGraph,
+  document: DocumentProjectionNode
+): RenderedProjection {
   if (document.projectionType === "dependency_view") {
     return { path: document.path, content: renderDependencyView(graph, document) };
   }
@@ -41,7 +50,10 @@ export function renderDocumentProjection(graph: PlanningGraph, document: Documen
   };
 }
 
-export function renderWorkItemProjection(graph: PlanningGraph, workItem: WorkItemNode): RenderedProjection {
+export function renderWorkItemProjection(
+  graph: PlanningGraph,
+  workItem: WorkItemNode
+): RenderedProjection {
   const dependencies = outgoing(graph, workItem.id, "depends_on").map((edge) => edge.target);
   const blocks = graph.edges
     .filter((edge) => edge.type === "depends_on" && edge.target === workItem.id)
@@ -65,8 +77,65 @@ export function renderWorkItemProjection(graph: PlanningGraph, workItem: WorkIte
 }
 
 function renderPrdBody(graph: PlanningGraph): string {
-  const requirements = graph.nodes.filter((node) => node.kind === "requirement");
-  return `## Requirements\n\n${list(requirements.map((node) => `${node.id}: ${node.title}`))}\n`;
+  const requirements = graph.nodes.filter(isRequirement);
+  const assumptions = graph.nodes.filter(isAssumption);
+  const openQuestions = graph.nodes.filter(isOpenQuestion);
+  const risks = graph.nodes.filter(isRisk);
+  const workItems = graph.nodes.filter(isWorkItem);
+  const intent = graph.productIntent;
+
+  return `## Product Summary
+
+${intent?.summary || "No product summary recorded."}
+
+## Target Users
+
+${list(intent?.targetUsers ?? [])}
+
+## Goals
+
+${list(intent?.goals ?? [])}
+
+## MVP Scope
+
+${list(intent?.mvpScope ?? [])}
+
+## Non-goals
+
+${list(intent?.nonGoals ?? [])}
+
+## Constraints
+
+${list(intent?.constraints ?? [])}
+
+## Requirements
+
+${list(requirements.map((node) => renderRequirement(graph, node)))}
+
+## Success Criteria
+
+${list(intent?.successCriteria ?? [])}
+
+## Assumptions
+
+${list(assumptions.map(renderAssumption))}
+
+## Open Questions
+
+${list(openQuestions.map(renderOpenQuestion))}
+
+## Risks
+
+${list(risks.map(renderRisk))}
+
+## Work Item Traceability
+
+${list(workItems.map((node) => renderWorkItemTrace(graph, node)))}
+
+## Scaffold Notes
+
+${list(intent?.scaffoldNotes ?? [])}
+`;
 }
 
 function renderRfcBody(graph: PlanningGraph): string {
@@ -96,7 +165,11 @@ function frontmatter(values: Record<string, string | number>): string {
     .join("\n")}\n---\n`;
 }
 
-function outgoing(graph: PlanningGraph, source: string, type: DependencyEdge["type"]): readonly DependencyEdge[] {
+function outgoing(
+  graph: PlanningGraph,
+  source: string,
+  type: DependencyEdge["type"]
+): readonly DependencyEdge[] {
   return graph.edges.filter((edge) => edge.source === source && edge.type === type);
 }
 
@@ -108,8 +181,45 @@ function list(values: readonly string[]): string {
   return values.length === 0 ? "- None" : values.map((value) => `- ${value}`).join("\n");
 }
 
+function renderRequirement(graph: PlanningGraph, requirement: RequirementNode): string {
+  const workItems = graph.edges
+    .filter((edge) => edge.type === "satisfies" && edge.target === requirement.id)
+    .map((edge) => edge.source);
+  const suffix =
+    workItems.length === 0 ? "" : ` Trace: ${workItems.map((id) => `\`${id}\``).join(", ")}.`;
+  return `${requirement.id} (${requirement.requirementType}, ${requirement.status}): ${requirement.title}. ${requirement.statement}${suffix}`;
+}
+
+function renderAssumption(node: AssumptionNode): string {
+  const blocker = node.blocksAfk ? "Blocks AFK." : "Does not block AFK.";
+  return `${node.id} (${node.confidence} confidence): ${node.title}. ${node.statement} Impact if wrong: ${node.impactIfWrong} ${blocker}`;
+}
+
+function renderOpenQuestion(node: OpenQuestionNode): string {
+  const blocker = node.blocksExecution ? "Blocks execution." : "Does not block execution.";
+  return `${node.id} (${node.priority} priority): ${node.question} ${blocker}`;
+}
+
+function renderRisk(node: RiskNode): string {
+  const blocker = node.blocksAfk ? "Blocks AFK." : "Does not block AFK.";
+  return `${node.id} (${node.likelihood} likelihood, ${node.impact} impact): ${node.title}. Mitigation: ${node.mitigation} ${blocker}`;
+}
+
+function renderWorkItemTrace(graph: PlanningGraph, workItem: WorkItemNode): string {
+  const requirements = outgoing(graph, workItem.id, "satisfies").map((edge) => edge.target);
+  const dependencies = outgoing(graph, workItem.id, "depends_on").map((edge) => edge.target);
+  const requirementText =
+    requirements.length === 0 ? "none" : requirements.map((id) => `\`${id}\``).join(", ");
+  const dependencyText =
+    dependencies.length === 0 ? "none" : dependencies.map((id) => `\`${id}\``).join(", ");
+  return `${workItem.id}: ${workItem.title}. Requirements: ${requirementText}. Readiness: ${workItem.readinessSnapshot.labels.join(", ")}. Depends on: ${dependencyText}.`;
+}
+
 function slug(id: string, title: string): string {
-  return `${id}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+  return `${id}-${title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")}`;
 }
 
 function isWorkItem(node: PlanningNode): node is WorkItemNode {
@@ -118,4 +228,20 @@ function isWorkItem(node: PlanningNode): node is WorkItemNode {
 
 function isDocumentProjection(node: PlanningNode): node is DocumentProjectionNode {
   return node.kind === "document_projection";
+}
+
+function isRequirement(node: PlanningNode): node is RequirementNode {
+  return node.kind === "requirement";
+}
+
+function isAssumption(node: PlanningNode): node is AssumptionNode {
+  return node.kind === "assumption";
+}
+
+function isOpenQuestion(node: PlanningNode): node is OpenQuestionNode {
+  return node.kind === "open_question";
+}
+
+function isRisk(node: PlanningNode): node is RiskNode {
+  return node.kind === "risk";
 }

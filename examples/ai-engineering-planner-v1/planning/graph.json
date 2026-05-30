@@ -3,6 +3,40 @@
   "graph_version": 6,
   "generated_at": "2026-05-29T00:00:00+10:00",
   "source": "manual-dogfood-from-grilling-session",
+  "product_intent": {
+    "summary": "ThePlanner is a CLI-first planning tool that turns a refined intake brief into a canonical Planning Graph and deterministic repository-native planning artifacts.",
+    "target_users": [
+      "Primary users who want to plan engineering work before implementation",
+      "Human engineers reviewing scoped Work Items",
+      "Coding agents consuming deterministic execution context"
+    ],
+    "goals": [
+      "Keep the Planning Graph as the source of truth for requirements, decisions, dependencies, and readiness",
+      "Render reviewable Markdown projections for PRDs, RFCs, architecture notes, Work Items, and dependency views",
+      "Support safe export, validation, reconciliation, and agent handoff workflows"
+    ],
+    "mvp_scope": [
+      "Create and validate a typed Planning Graph",
+      "Render deterministic projections into repository paths",
+      "Prepare and run local coding-agent handoffs with bounded validation"
+    ],
+    "non_goals": [
+      "Live LLM planning or provider calls during deterministic graph operations",
+      "Treating Markdown projections as canonical planning state",
+      "Full external tracker synchronization beyond dry-run previews"
+    ],
+    "constraints": [
+      "Core domain logic must not import CLI, filesystem, process, schema, tracker, or other adapter code",
+      "CLI commands must be deterministic and pipeline-friendly",
+      "Projection paths must remain stable and workspace-confined"
+    ],
+    "success_criteria": [
+      "A user can generate, validate, export, and review planning artifacts from a graph without manual rewriting",
+      "Work Items include dependencies, validation methods, readiness labels, and traceable requirement links",
+      "Dry-run and apply commands report deterministic JSON results"
+    ],
+    "scaffold_notes": []
+  },
   "nodes": {
     "requirements": [
       {
