@@ -8,6 +8,7 @@ import type {
   AgentRunArtifactWriter,
   ChangeLogWriter,
   ContextFileReader,
+  GraphOperationProposalReader,
   GraphRepository,
   IntakeIdeaReader,
   PlanningChangeLogEvent,
@@ -175,6 +176,19 @@ export class FileRefinedBriefReader implements RefinedBriefReader {
         throw new Error(`Refined brief file not found: ${path}`);
       }
       throw error;
+    }
+  }
+}
+
+export class FileGraphOperationProposalReader implements GraphOperationProposalReader {
+  public async readJson(path: string): Promise<unknown> {
+    try {
+      return JSON.parse(await readFile(resolve(path), "utf8"));
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new Error(`Graph Operation proposal file not found: ${path}`);
+      }
+      throw new Error(`Graph Operation proposal file is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

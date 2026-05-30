@@ -11,6 +11,7 @@ import {
   FileAgentRunArtifactWriter,
   FileChangeLogWriter,
   FileContextReader,
+  FileGraphOperationProposalReader,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
   FilePlanningGraphSchemaValidator,
@@ -753,6 +754,77 @@ describe("planner CLI use case wiring", () => {
       expectJsonError(result, "Refusing to overwrite existing non-empty planning/graph.json without an explicit force/update path.");
       expect(parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8"))).nodes).toHaveLength(graph.nodes.length);
       expect(await readFile("planning/change-log.ndjson", "utf8")).toBe("");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("dry-runs an AddOpenQuestion Graph Operation fixture without writing graph files", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-operation-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await new FilePlanningGraphRepository().save(graph);
+      await writeFile(
+        "proposal.json",
+        `${JSON.stringify(
+          {
+            operation: "add_open_question",
+            open_question: {
+              id: "oq-001",
+              title: "Deployment target",
+              question: "Which deployment target should the first release support?",
+              priority: "high",
+              blocks_execution: true,
+              provenance: {
+                source_type: "planner_inference",
+                source_reference: "planning/intake/refined-brief.md#open-questions",
+                created_by: "test proposer",
+                confidence: "medium"
+              }
+            }
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+      const before = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--dry-run", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => { throw new Error("graph operation dry-run must not write projections"); } },
+        graphOperationProposalReader: new FileGraphOperationProposalReader()
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "candidate",
+        dryRun: true,
+        applied: false,
+        operation: "AddOpenQuestion",
+        graphVersionBefore: 1,
+        graphVersionAfter: 2,
+        candidateGraph: {
+          graph_version: 2,
+          nodes: {
+            open_questions: [
+              {
+                id: "oq-001",
+                title: "Deployment target",
+                question: "Which deployment target should the first release support?",
+                priority: "high",
+                blocks_execution: true
+              }
+            ]
+          }
+        },
+        validation: { status: "pass" }
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(before);
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });

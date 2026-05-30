@@ -1,5 +1,6 @@
 import {
   applyGraphPatches,
+  applyGraphOperationToCandidate,
   currentPlanningGraphSchemaVersion,
   generateIntakeQuestions,
   proposePlanningGraphFromBrief,
@@ -12,8 +13,11 @@ import {
 import type {
   GraphValidationResult,
   IntakeQuestionSet,
+  OpenQuestionNode,
   PlanningGraph,
   ProjectionInput,
+  ProposedGraphOperation,
+  Provenance,
   ReconciliationResult,
   RenderedProjection,
   WorkItemNode
@@ -114,6 +118,10 @@ export interface IntakeIdeaReader {
 
 export interface RefinedBriefReader {
   readonly read: (path: string) => Promise<string>;
+}
+
+export interface GraphOperationProposalReader {
+  readonly readJson: (path: string) => Promise<unknown>;
 }
 
 export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
@@ -771,6 +779,82 @@ export async function planFromBriefApplyUseCase(args: {
   };
 }
 
+export async function graphOperationDryRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly proposalReader: GraphOperationProposalReader;
+  readonly fromPath: string;
+}): Promise<{
+  readonly status: "candidate" | "rejected";
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly sourcePath: string;
+  readonly operation: string;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly candidateGraph?: unknown;
+  readonly operationErrors: readonly {
+    readonly code: string;
+    readonly message: string;
+    readonly nodeId?: string;
+  }[];
+  readonly validation: GraphValidationResult;
+  readonly message: string;
+}> {
+  const graph = await args.graphRepository.load();
+  const operation = parseProposedGraphOperationJson(await args.proposalReader.readJson(args.fromPath));
+  const applyResult = applyGraphOperationToCandidate(graph, operation);
+
+  if (applyResult.status === "rejected") {
+    return {
+      status: "rejected",
+      dryRun: true,
+      applied: false,
+      sourcePath: args.fromPath,
+      operation: operation.kind,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: graph.graphVersion,
+      operationErrors: applyResult.errors,
+      validation: validatePlanningGraph(graph),
+      message: "Proposed Graph Operation was rejected before candidate validation. No planning files were written."
+    };
+  }
+
+  const validation = validatePlanningGraph(applyResult.candidateGraph);
+  if (validation.status === "error") {
+    return {
+      status: "rejected",
+      dryRun: true,
+      applied: false,
+      sourcePath: args.fromPath,
+      operation: operation.kind,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: applyResult.candidateGraph.graphVersion,
+      candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
+      operationErrors: validation.semanticErrors.map((error) => ({
+        code: error.code,
+        message: error.message,
+        ...(error.nodeId ? { nodeId: String(error.nodeId) } : {})
+      })),
+      validation,
+      message: "Candidate graph failed validation. No planning files were written."
+    };
+  }
+
+  return {
+    status: "candidate",
+    dryRun: true,
+    applied: false,
+    sourcePath: args.fromPath,
+    operation: operation.kind,
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: applyResult.candidateGraph.graphVersion,
+    candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
+    operationErrors: [],
+    validation,
+    message: "Dry run only. Proposed Graph Operation was applied to a validated candidate graph; no planning files were written."
+  };
+}
+
 export async function reconcileGraphUseCase(args: {
   readonly graphRepository: GraphRepository;
   readonly projectionReader: ProjectionReader;
@@ -1303,6 +1387,46 @@ function parseJsonObjectProperty(value: unknown, path: string): Record<string, u
   }
 
   return value as Record<string, unknown>;
+}
+
+function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation {
+  const operation = parseJsonObjectProperty(value, "Proposed Graph Operation");
+  const operationName = readString(operation.operation ?? operation.kind, "operation");
+
+  if (operationName !== "add_open_question" && operationName !== "AddOpenQuestion") {
+    throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
+  }
+
+  const rawOpenQuestion = parseJsonObjectProperty(operation.open_question ?? operation.openQuestion, "open_question");
+  const rawProvenance = rawOpenQuestion.provenance
+    ? parseJsonObjectProperty(rawOpenQuestion.provenance, "open_question.provenance")
+    : undefined;
+  const provenance: Provenance | undefined = rawProvenance
+    ? {
+        sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, "open_question.provenance.source_type") as Provenance["sourceType"],
+        sourceReference: readString(
+          rawProvenance.source_reference ?? rawProvenance.sourceReference,
+          "open_question.provenance.source_reference"
+        ),
+        createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, "open_question.provenance.created_by"),
+        confidence: readString(rawProvenance.confidence, "open_question.provenance.confidence") as Provenance["confidence"]
+      }
+    : undefined;
+  const openQuestion: OpenQuestionNode = {
+    id: readString(rawOpenQuestion.id, "open_question.id") as OpenQuestionNode["id"],
+    kind: "open_question",
+    title: readString(rawOpenQuestion.title, "open_question.title"),
+    status: "active",
+    question: readString(rawOpenQuestion.question, "open_question.question"),
+    priority: readString(rawOpenQuestion.priority, "open_question.priority") as OpenQuestionNode["priority"],
+    blocksExecution: readBoolean(rawOpenQuestion.blocks_execution ?? rawOpenQuestion.blocksExecution, "open_question.blocks_execution"),
+    ...(provenance ? { provenance } : {})
+  };
+
+  return {
+    kind: "AddOpenQuestion",
+    openQuestion
+  };
 }
 
 function readValidationSummary(value: unknown): AgentRunValidationSummary {

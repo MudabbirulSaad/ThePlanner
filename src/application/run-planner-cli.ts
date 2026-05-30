@@ -6,6 +6,7 @@ export interface PlannerCliResult {
 
 import {
   exportProjectionsUseCase,
+  graphOperationDryRunUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
   decideAgentRunUseCase,
@@ -26,6 +27,7 @@ import type {
   AgentRunArtifactReader,
   AgentRunArtifactWriter,
   ChangeLogWriter,
+  GraphOperationProposalReader,
   GraphRepository,
   IntakeIdeaReader,
   JsonSchemaValidator,
@@ -51,6 +53,7 @@ export interface PlannerCliServices {
   readonly intakeIdeaReader?: IntakeIdeaReader;
   readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
+  readonly graphOperationProposalReader?: GraphOperationProposalReader;
   readonly contextFileReader?: ContextFileReader;
   readonly runArtifactReader?: AgentRunArtifactReader;
   readonly runArtifactWriter?: AgentRunArtifactWriter;
@@ -230,6 +233,36 @@ export async function runPlannerCli(
         apply: rest.includes("--apply")
       });
       return render(0, result, json);
+    } catch (error) {
+      return renderError(error, json);
+    }
+  }
+
+  if (command === "graph-operation") {
+    if (rest.includes("--apply")) {
+      return fail("theplanner graph-operation --apply is deferred; use --dry-run to validate a candidate", json);
+    }
+
+    if (!rest.includes("--dry-run")) {
+      return fail("theplanner graph-operation requires --dry-run", json);
+    }
+
+    if (!services.graphOperationProposalReader) {
+      return fail("theplanner graph-operation requires a graph operation proposal reader", json);
+    }
+
+    const from = readOption(rest, "--from");
+    if (!from) {
+      return fail("theplanner graph-operation requires --from <file>", json);
+    }
+
+    try {
+      const result = await graphOperationDryRunUseCase({
+        graphRepository: services.graphRepository,
+        proposalReader: services.graphOperationProposalReader,
+        fromPath: from
+      });
+      return render(result.status === "rejected" ? 1 : 0, result, json);
     } catch (error) {
       return renderError(error, json);
     }

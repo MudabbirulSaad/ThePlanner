@@ -5,3 +5,4 @@ export * from "./reconciliation.js";
 export * from "./intake.js";
 export * from "./refined-brief.js";
 export * from "./plan-from-brief.js";
+export * from "./graph-operations.js";
