@@ -1,6 +1,6 @@
 # ThePlanner
 
-ThePlanner is a CLI-first TypeScript/Node tool for keeping repository planning artifacts aligned with a canonical Planning Graph. It turns planning state into deterministic Markdown projections, dependency views, readiness labels, validation output, and reconciliation reports.
+ThePlanner is a CLI-first TypeScript/Node tool for turning a product idea into repository-native planning artifacts backed by a canonical Planning Graph. It produces deterministic PRD, architecture, RFC, dependency, Work Item, readiness, agent-context, validation, run-audit, tracker-preview, repo-scan, and reconciliation outputs.
 
 ## MVP Scope
 
@@ -12,10 +12,24 @@ The MVP is local and repository-first:
 - Markdown files under that workspace's `planning/`, `docs/prd/`, `docs/rfc/`, and `docs/architecture/` paths are projections.
 - Work Items carry deterministic execution state, readiness labels, acceptance criteria, and validation methods.
 - Validation checks graph JSON Schema shape, graph semantics, and derived readiness summaries.
-- Reconciliation inspects Work Item Markdown and proposes safe graph patches without mutating unless `--apply` is passed.
+- Reconciliation inspects Work Item Markdown plus supported PRD and architecture Open Question edits, then proposes safe graph patches without mutating unless `--apply` is passed.
 - Planning changes are recorded in `planning/change-log.ndjson` for graph-changing flows.
 
-External tracker live sync, live LLM calls, and autonomous execution are outside V1.
+External tracker live sync and live LLM cloud API calls are outside V1. Local agent execution is supported through configured CLI commands and remains human-reviewed through saved run artifacts plus accept/reject audit events.
+
+## Current Release
+
+Version `0.1.1` adds the dogfooded planning loop for product-grade artifacts and local agent handoff:
+
+- PRD-grade `product_intent` graph metadata from refined briefs.
+- Rich PRD projection rendering for product summary, users, goals, MVP scope, requirements, assumptions, open questions, risks, success criteria, and traceability.
+- Architecture-grade component interfaces, dependencies, constraints, risks, validation, and architecture projection rendering.
+- RFC decision extraction and rendering for accepted, proposed, and revisit decisions.
+- HITL gates derived from blocking assumptions, high-impact risks, unresolved decisions, and execution-blocking open questions.
+- Deeper AFK readiness checks for context, boundaries, validation strength, dependency closure, and safe-failure guidance.
+- Extracted agent context bundle rendering and persisted run handoff artifacts.
+- Read-only `scan repo --dry-run` context discovery.
+- Reconciliation for deterministic Open Question edits in PRD and architecture projections.
 
 ## Setup
 
@@ -102,6 +116,7 @@ theplanner intake questions --from planning/intake/idea.md --json
 theplanner intake refine --from planning/intake/idea.md --out planning/intake/refined-brief.md --json
 theplanner plan --from planning/intake/refined-brief.md --dry-run --json
 theplanner plan --from planning/intake/refined-brief.md --apply --json
+theplanner scan repo --dry-run --json
 theplanner reconcile --json
 theplanner reconcile --apply --json
 theplanner prepare wi-001 --agent codex --dry-run --json
@@ -126,8 +141,9 @@ Command behavior:
 - `intake refine --from <file> --out <file>`: creates a user-owned refined brief Markdown scaffold with TODO sections for product summary, users, goals, MVP scope, non-goals, constraints, success criteria, and open questions. Existing files are reported as skipped and left untouched unless `--force` is passed. Fill this brief manually or with an agent before planning from it.
 - `plan --from <file> --dry-run --json`: reads a refined brief and prints a deterministic valid graph proposal without writing `planning/graph.json` or exporting projections. The proposal is conservative and includes scaffold notes where fields are inferred.
 - `plan --from <file> --apply --json`: validates the refined brief graph proposal, writes `planning/graph.json`, and appends `planning/change-log.ndjson`. Existing non-empty graphs are protected until a future explicit update or force path exists.
-- `reconcile`: reads Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
-- `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event.
+- `scan repo --dry-run --json`: scans deterministic local repository context, including package scripts, project types, relevant docs/headings, planning files, source areas, ignored directories, and scanned files. It is read-only and never writes planning files.
+- `reconcile`: reads document and Work Item projections and reports proposed patches, conflicts, unsupported projection edits, inspected paths, and `applied: false`.
+- `reconcile --apply`: applies only safe proposed patches when there are no conflicts, increments graph version, and appends a change-log event. Current richer document reconciliation supports deterministic Open Question question and `blocks_execution` edits in PRD and architecture projections.
 - `prepare <work-item-id> --agent <codex|claude|gemini> --dry-run --json`: verifies the Work Item exists and is agent-eligible, then prints a deterministic manual paste context bundle with `AGENTS.md`, the rendered Work Item projection, dependency view, related document projections, validation commands, and scope reminders. Dry run does not execute agents, write run artifacts, mutate source code, or mark Work Items done.
 - `prepare <work-item-id> --agent <codex|claude|gemini> --apply --json`: writes a local handoff record under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/` with `metadata.json`, `prompt.md`, and `context.md`. JSON reports the run id, metadata, and created paths. These run artifacts are not ignored by default because they are local, git-reviewable evidence of what was handed to an agent. Use `prompt.md` as the manual paste prompt and `context.md` to inspect or reproduce the exact context bundle. Apply mode does not execute an agent, mutate graph state, or mark Work Items done.
 - `run <work-item-id> --agent <codex|claude|gemini> --json`: verifies the Work Item is agent-eligible and AFK-ready, creates the same context bundle, invokes the selected local coding-agent CLI, then runs the Work Item validation commands. It writes `metadata.json`, `prompt.md`, `context.md`, `runner-stdout.log`, `runner-stderr.log`, `validation-stdout.log`, `validation-stderr.log`, and `result.json` under `planning/runs/run-YYYYMMDD-HHMMSS-<work-item-id>/`. Missing binaries return failed JSON with `runner.error.code: runner_not_found`; Codex auth preflight failures return `runner.error.code: runner_auth_failed`; agent timeouts return `runner.error.code: runner_timeout`; agent output caps return `runner.error.code: runner_output_limit_exceeded`; validation timeouts and output caps are reported on validation commands with `validation_command_timeout` or `validation_command_output_limit_exceeded`. Truncated output artifacts include `[planner: stdout truncated after N bytes]` or `[planner: stderr truncated after N bytes]`, and `result.json` reports per-stream byte counts and truncation flags. Validation failures return failed JSON with `validation.status: "fail"`. Running a coding agent may modify your working tree; review the saved run artifacts and working tree before accepting any changes.
@@ -148,7 +164,7 @@ npm pack --dry-run
 npm publish --access public
 ```
 
-Before publishing a new version, confirm the package name and version with `npm view @mudabbirulsaad/theplanner version`. A first publish should return npm `E404` before `npm publish`.
+Before publishing a new version, confirm the package name and version with `npm view @mudabbirulsaad/theplanner version`.
 
 ## Schema Version Policy
 
@@ -210,8 +226,11 @@ The repository follows Hexagonal Architecture:
 
 - `theplanner plan` supports dry-run JSON proposals and explicit new-graph creation with `--apply`; updates to existing non-empty graphs and force overwrite flows are deferred.
 - Runtime JSON Schema validation covers the current `planning/graph.schema.json` keyword set before semantic validation. V1 supports only `schema_version: "0.1.0"` and reports unsupported versions instead of migrating them.
-- Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields, but richer Markdown sections, decision/component/risk references, and freeform implementation notes are reported as unsupported/deferred.
+- Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields and deterministic Open Question edits in PRD/architecture projections, but decision/component/risk references and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is limited to `sync github --dry-run --json`; live external issue creation and credentialed tracker APIs are deferred.
 - LLM cloud API adapters and live provider calls are not implemented.
 - `theplanner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
 - Validation commands are executed directly as argv-style process commands. Shell operators such as `&&` require an explicit shell command wrapper.
+- Run ids and audit event ids currently use second-level timestamps plus an in-process counter. Avoid starting multiple runs or opposite accept/reject decisions for the same run in the same second until id uniqueness is hardened.
+- `PLANNER_RUN_DIRECTORY` is provided to the local agent command; agents that write inside it should create the directory if needed.
+- Reconciled Open Questions that become execution-blocking are persisted to the graph, but downstream readiness/HITL implications still require a follow-up planning pass.
