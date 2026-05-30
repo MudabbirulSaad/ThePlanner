@@ -1,0 +1,30 @@
+{
+  "proposals": [
+    {
+      "source_reference": "tests/fixtures/llm/gemini-proposal-response.json#proposal-1",
+      "rationale": "The fixture turns a user answer into an accepted planning decision.",
+      "operation": {
+        "operation": "add_decision",
+        "decision": {
+          "id": "dec-001",
+          "title": "Provider integrations stay dry-run first",
+          "status": "accepted",
+          "selected_option": "Keep provider adapters fixture-backed until live integration issues exist.",
+          "rationale": "The current slice only asks for scaffolded adapters and deterministic fixtures.",
+          "rejected_alternatives": ["Call live provider APIs from adapter tests"],
+          "unresolved_questions": [],
+          "provenance": {
+            "source_type": "planner_inference",
+            "source_reference": "tests/fixtures/llm/gemini-proposal-response.json#proposal-1",
+            "created_by": "gemini fixture proposer",
+            "confidence": "high"
+          }
+        },
+        "approval_classification": {
+          "category": "commitment_changing",
+          "rationale": "Accepted decisions change planning commitments."
+        }
+      }
+    }
+  ]
+}

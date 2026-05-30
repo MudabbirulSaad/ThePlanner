@@ -1,0 +1,24 @@
+{
+  "proposals": [
+    {
+      "source_reference": "tests/fixtures/llm/claude-proposal-response.json#proposal-1",
+      "rationale": "The fixture extracts one functional requirement from the brief.",
+      "operation": {
+        "operation": "add_requirement",
+        "requirement": {
+          "id": "req-001",
+          "title": "Validate provider proposals",
+          "type": "functional",
+          "status": "active",
+          "statement": "The planner must validate LLM-provider proposals through the Graph Operation pipeline before any apply path.",
+          "provenance": {
+            "source_type": "planner_inference",
+            "source_reference": "tests/fixtures/llm/claude-proposal-response.json#proposal-1",
+            "created_by": "claude fixture proposer",
+            "confidence": "medium"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "proposals": [
+    {
+      "source_reference": "tests/fixtures/llm/codex-proposal-response.json#proposal-1",
+      "rationale": "The fixture asks for one unresolved release-readiness question.",
+      "operation": {
+        "operation": "add_open_question",
+        "open_question": {
+          "id": "oq-001",
+          "title": "Release readiness owner",
+          "question": "Who owns final release-readiness approval?",
+          "priority": "high",
+          "blocks_execution": true,
+          "provenance": {
+            "source_type": "planner_inference",
+            "source_reference": "tests/fixtures/llm/codex-proposal-response.json#proposal-1",
+            "created_by": "codex fixture proposer",
+            "confidence": "medium"
+          }
+        }
+      }
+    }
+  ]
+}
