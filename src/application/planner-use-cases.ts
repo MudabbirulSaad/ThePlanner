@@ -15,6 +15,7 @@ import type {
   DecisionNode,
   DependencyEdge,
   GraphOperationApprovalCategory,
+  HitlGateNode,
   IntakeQuestionSet,
   OpenQuestionNode,
   PlanningGraph,
@@ -1525,6 +1526,38 @@ function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation
     };
   }
 
+  if (operationName === "add_dependency_edge" || operationName === "AddDependencyEdge") {
+    return {
+      kind: "AddDependencyEdge",
+      edge: readDependencyEdge(operation.edge ?? operation.dependency_edge ?? operation.dependencyEdge, "edge")
+    };
+  }
+
+  if (operationName === "add_hitl_gate" || operationName === "AddHitlGate") {
+    const rawHitlGate = parseJsonObjectProperty(operation.hitl_gate ?? operation.hitlGate, "hitl_gate");
+    const hitlGate: HitlGateNode = {
+      id: readString(rawHitlGate.id, "hitl_gate.id") as HitlGateNode["id"],
+      kind: "hitl_gate",
+      title: readString(rawHitlGate.title, "hitl_gate.title"),
+      status: readString(rawHitlGate.status ?? "active", "hitl_gate.status") as HitlGateNode["status"],
+      requiredAction: readString(rawHitlGate.required_action ?? rawHitlGate.requiredAction, "hitl_gate.required_action"),
+      blocks: readStringArray(rawHitlGate.blocks ?? [], "hitl_gate.blocks") as HitlGateNode["blocks"],
+      resolvedAt:
+        rawHitlGate.resolved_at || rawHitlGate.resolvedAt
+          ? readString(rawHitlGate.resolved_at ?? rawHitlGate.resolvedAt, "hitl_gate.resolved_at")
+          : undefined,
+      resolution:
+        rawHitlGate.resolution !== undefined ? readString(rawHitlGate.resolution, "hitl_gate.resolution") : undefined,
+      ...readOptionalProvenance(rawHitlGate, "hitl_gate")
+    };
+
+    return {
+      kind: "AddHitlGate",
+      hitlGate,
+      edges: readDependencyEdges(operation.edges ?? operation.cause_links ?? operation.causeLinks ?? [], "edges")
+    };
+  }
+
   throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
 }
 
@@ -1565,15 +1598,17 @@ function readApprovalClassification(value: unknown): {
 }
 
 function readDependencyEdges(value: unknown, path: string): readonly DependencyEdge[] {
-  return readArray(value, path).map((edge, index) => {
-    const rawEdge = parseJsonObjectProperty(edge, `${path}[${index}]`);
-    return {
-      source: readString(rawEdge.source, `${path}[${index}].source`) as DependencyEdge["source"],
-      target: readString(rawEdge.target, `${path}[${index}].target`) as DependencyEdge["target"],
-      type: readString(rawEdge.type, `${path}[${index}].type`) as DependencyEdge["type"],
-      rationale: readString(rawEdge.rationale, `${path}[${index}].rationale`)
-    };
-  });
+  return readArray(value, path).map((edge, index) => readDependencyEdge(edge, `${path}[${index}]`));
+}
+
+function readDependencyEdge(value: unknown, path: string): DependencyEdge {
+  const rawEdge = parseJsonObjectProperty(value, path);
+  return {
+    source: readString(rawEdge.source, `${path}.source`) as DependencyEdge["source"],
+    target: readString(rawEdge.target, `${path}.target`) as DependencyEdge["target"],
+    type: readString(rawEdge.type, `${path}.type`) as DependencyEdge["type"],
+    rationale: readString(rawEdge.rationale, `${path}.rationale`)
+  };
 }
 
 function readValidationMethods(value: unknown, path: string): readonly ValidationMethod[] {

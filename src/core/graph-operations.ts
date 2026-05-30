@@ -1,6 +1,7 @@
 import type {
   DecisionNode,
   DependencyEdge,
+  HitlGateNode,
   OpenQuestionNode,
   PlanningGraph,
   PlanningNode,
@@ -16,7 +17,9 @@ export type ProposedGraphOperation =
   | AddOpenQuestionGraphOperation
   | AddRequirementGraphOperation
   | AddDecisionGraphOperation
-  | AddWorkItemGraphOperation;
+  | AddWorkItemGraphOperation
+  | AddDependencyEdgeGraphOperation
+  | AddHitlGateGraphOperation;
 
 export type GraphOperationApprovalCategory =
   | "none"
@@ -51,6 +54,17 @@ export interface AddDecisionGraphOperation {
 export interface AddWorkItemGraphOperation {
   readonly kind: "AddWorkItem";
   readonly workItem: WorkItemNode;
+  readonly edges: readonly DependencyEdge[];
+}
+
+export interface AddDependencyEdgeGraphOperation {
+  readonly kind: "AddDependencyEdge";
+  readonly edge: DependencyEdge;
+}
+
+export interface AddHitlGateGraphOperation {
+  readonly kind: "AddHitlGate";
+  readonly hitlGate: HitlGateNode;
   readonly edges: readonly DependencyEdge[];
 }
 
@@ -128,6 +142,30 @@ export function applyGraphOperationToCandidate(
     };
   }
 
+  if (operationClone.kind === "AddDependencyEdge") {
+    return {
+      status: "applied",
+      approval: {
+        required: true,
+        category: "readiness_changing",
+        rationale: "Dependency Edge proposals can change Work Item readiness."
+      },
+      candidateGraph: addDependencyEdgeToCandidateGraph(candidateGraph, operationClone)
+    };
+  }
+
+  if (operationClone.kind === "AddHitlGate") {
+    return {
+      status: "applied",
+      approval: {
+        required: true,
+        category: "readiness_changing",
+        rationale: "HITL Gate proposals can block Work Item readiness."
+      },
+      candidateGraph: addHitlGateToCandidateGraph(candidateGraph, operationClone)
+    };
+  }
+
   return {
     status: "rejected",
     errors: [
@@ -157,6 +195,14 @@ export function validateGraphOperation(
 
   if (operation.kind === "AddWorkItem") {
     return validateAddWorkItemOperation(graph, operation);
+  }
+
+  if (operation.kind === "AddDependencyEdge") {
+    return validateAddDependencyEdgeOperation(graph, operation);
+  }
+
+  if (operation.kind === "AddHitlGate") {
+    return validateAddHitlGateOperation(graph, operation);
   }
 
   return [
@@ -403,10 +449,150 @@ function validateAddWorkItemOperation(graph: PlanningGraph, operation: AddWorkIt
   return errors;
 }
 
+function validateAddDependencyEdgeOperation(
+  graph: PlanningGraph,
+  operation: AddDependencyEdgeGraphOperation
+): readonly GraphOperationFinding[] {
+  const errors = validateDependencyEdgeReferences(graph, operation.edge, "AddDependencyEdge");
+
+  if (operation.edge.type === "depends_on" && operation.edge.source === operation.edge.target) {
+    errors.push({
+      code: "dependency_edge_self_dependency",
+      message: `AddDependencyEdge depends_on edge must not reference the same source and target: ${operation.edge.source}`,
+      nodeId: operation.edge.source
+    });
+  }
+
+  if (graph.edges.some((edge) => edgeKey(edge) === edgeKey(operation.edge))) {
+    errors.push({
+      code: "dependency_edge_duplicate",
+      message: `Planning Graph already contains dependency edge: ${operation.edge.source} ${operation.edge.type} ${operation.edge.target}`,
+      nodeId: operation.edge.source
+    });
+  }
+
+  return errors;
+}
+
+function validateAddHitlGateOperation(graph: PlanningGraph, operation: AddHitlGateGraphOperation): readonly GraphOperationFinding[] {
+  const hitlGate = operation.hitlGate;
+  const errors: GraphOperationFinding[] = [];
+  const nodeById = new Map<string, PlanningNode>(graph.nodes.map((node) => [node.id, node]));
+
+  errors.push(...validateNodeId(graph, hitlGate, "hitl", "HITL Gate", "AddHitlGate"));
+
+  if (hitlGate.kind !== "hitl_gate") {
+    errors.push({
+      code: "hitl_gate_kind_invalid",
+      message: "AddHitlGate can only add a hitl_gate node.",
+      nodeId: hitlGate.id
+    });
+  }
+
+  if (!hitlGate.title.trim()) {
+    errors.push({
+      code: "hitl_gate_title_required",
+      message: "AddHitlGate requires a non-empty title.",
+      nodeId: hitlGate.id
+    });
+  }
+
+  if (!["active", "accepted", "resolved", "planned"].includes(hitlGate.status)) {
+    errors.push({
+      code: "hitl_gate_status_invalid",
+      message: "AddHitlGate status must be active, accepted, resolved, or planned.",
+      nodeId: hitlGate.id
+    });
+  }
+
+  if (!hitlGate.requiredAction.trim()) {
+    errors.push({
+      code: "hitl_gate_missing_required_action",
+      message: `HITL Gate must explain the required human action: ${hitlGate.id}`,
+      nodeId: hitlGate.id
+    });
+  }
+
+  if (hitlGate.blocks.length === 0 && hitlGate.status !== "accepted" && hitlGate.status !== "resolved") {
+    errors.push({
+      code: "hitl_gate_missing_blocked_work_items",
+      message: `Active HITL Gate must block at least one Work Item: ${hitlGate.id}`,
+      nodeId: hitlGate.id
+    });
+  }
+
+  for (const workItemId of hitlGate.blocks) {
+    if (!isWorkItem(nodeById.get(workItemId))) {
+      errors.push({
+        code: "hitl_gate_blocks_missing_work_item",
+        message: `HITL Gate blocks must reference existing Work Items: ${hitlGate.id} blocks ${workItemId}`,
+        nodeId: hitlGate.id
+      });
+    }
+  }
+
+  for (const edge of operation.edges) {
+    if (edge.source !== hitlGate.id) {
+      errors.push({
+        code: "hitl_gate_edge_source_invalid",
+        message: `AddHitlGate edges must start from the new HITL Gate: ${hitlGate.id}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    if (edge.target === hitlGate.id) {
+      errors.push({
+        code: "hitl_gate_edge_self_reference",
+        message: `AddHitlGate edge must not reference itself: ${hitlGate.id}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    if (edge.source !== hitlGate.id && !nodeById.has(edge.source)) {
+      errors.push({
+        code: "dependency_edge_source_missing",
+        message: `AddHitlGate edge source does not exist: ${edge.source}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    if (!nodeById.has(edge.target)) {
+      errors.push({
+        code: "dependency_edge_target_missing",
+        message: `AddHitlGate edge target does not exist: ${edge.target}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    if (!edge.rationale.trim()) {
+      errors.push({
+        code: "dependency_edge_rationale_required",
+        message: `AddHitlGate edge requires a non-empty rationale: ${edge.source} ${edge.type} ${edge.target}`,
+        nodeId: hitlGate.id
+      });
+    }
+  }
+
+  const hasCauseLink = operation.edges.some(
+    (edge) => edge.source === hitlGate.id && edge.type === "references" && nodeById.has(edge.target)
+  );
+  if (hitlGate.status !== "accepted" && hitlGate.status !== "resolved" && !hasCauseLink) {
+    errors.push({
+      code: "hitl_gate_missing_cause_link",
+      message: `HITL Gate must reference the uncertainty that caused it: ${hitlGate.id}`,
+      nodeId: hitlGate.id
+    });
+  }
+
+  errors.push(...validateRequiredProvenance(hitlGate));
+
+  return errors;
+}
+
 function validateNodeId(
   graph: PlanningGraph,
   node: PlanningNode,
-  prefix: "req" | "dec" | "oq" | "wi",
+  prefix: "req" | "dec" | "oq" | "wi" | "hitl",
   label: string,
   operationName: string
 ): readonly GraphOperationFinding[] {
@@ -434,6 +620,49 @@ function validateNodeId(
       code: "graph_operation_duplicate_node_id",
       message: `Planning Graph already contains node id: ${node.id}`,
       nodeId: node.id
+    });
+  }
+
+  return errors;
+}
+
+function validateDependencyEdgeReferences(
+  graph: PlanningGraph,
+  edge: DependencyEdge,
+  operationName: string
+): GraphOperationFinding[] {
+  const errors: GraphOperationFinding[] = [];
+  const nodeById = new Map<string, PlanningNode>(graph.nodes.map((node) => [node.id, node]));
+
+  if (!nodeById.has(edge.source)) {
+    errors.push({
+      code: "dependency_edge_source_missing",
+      message: `${operationName} edge source does not exist: ${edge.source}`,
+      nodeId: edge.source
+    });
+  }
+
+  if (!nodeById.has(edge.target)) {
+    errors.push({
+      code: "dependency_edge_target_missing",
+      message: `${operationName} edge target does not exist: ${edge.target}`,
+      nodeId: edge.source
+    });
+  }
+
+  if (!["depends_on", "blocks", "satisfies", "mitigates", "raises", "references", "supersedes"].includes(edge.type)) {
+    errors.push({
+      code: "dependency_edge_type_invalid",
+      message: `${operationName} edge type is not supported: ${edge.type}`,
+      nodeId: edge.source
+    });
+  }
+
+  if (!edge.rationale.trim()) {
+    errors.push({
+      code: "dependency_edge_rationale_required",
+      message: `${operationName} edge requires a non-empty rationale: ${edge.source} ${edge.type} ${edge.target}`,
+      nodeId: edge.source
     });
   }
 
@@ -662,6 +891,44 @@ function addWorkItemToCandidateGraph(candidateGraph: PlanningGraph, operation: A
   };
 }
 
+function addDependencyEdgeToCandidateGraph(
+  candidateGraph: PlanningGraph,
+  operation: AddDependencyEdgeGraphOperation
+): PlanningGraph {
+  const nextVersion = graphVersion(Number(candidateGraph.graphVersion) + 1);
+  return withDerivedReadiness({
+    ...candidateGraph,
+    graphVersion: nextVersion,
+    edges: appendNewEdges(candidateGraph.edges, [operation.edge])
+  });
+}
+
+function addHitlGateToCandidateGraph(candidateGraph: PlanningGraph, operation: AddHitlGateGraphOperation): PlanningGraph {
+  const nextVersion = graphVersion(Number(candidateGraph.graphVersion) + 1);
+  return withDerivedReadiness({
+    ...candidateGraph,
+    graphVersion: nextVersion,
+    nodes: [...candidateGraph.nodes, operation.hitlGate],
+    edges: appendNewEdges(candidateGraph.edges, operation.edges)
+  });
+}
+
+function withDerivedReadiness(graph: PlanningGraph): PlanningGraph {
+  const validation = validatePlanningGraph(graph);
+
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      isWorkItem(node)
+        ? {
+            ...node,
+            readinessSnapshot: validation.readinessSnapshots[node.id] ?? deriveReadinessSnapshot(graph, node)
+          }
+        : node
+    )
+  };
+}
+
 function appendNewEdges(
   existingEdges: readonly DependencyEdge[],
   proposedEdges: readonly DependencyEdge[]
@@ -721,11 +988,19 @@ function nodeLabel(node: PlanningNode): string {
     return "Work Item";
   }
 
+  if (node.kind === "hitl_gate") {
+    return "HITL Gate";
+  }
+
   return node.kind.replace("_", " ");
 }
 
 function isRequirementOrAcceptedDecision(node: PlanningNode | undefined): boolean {
   return node?.kind === "requirement" || (node?.kind === "decision" && node.status === "accepted");
+}
+
+function isWorkItem(node: PlanningNode | undefined): node is WorkItemNode {
+  return node?.kind === "work_item";
 }
 
 function provenanceFields(provenance: Provenance): readonly { readonly name: string; readonly value: string }[] {
