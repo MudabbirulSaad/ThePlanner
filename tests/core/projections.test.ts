@@ -264,4 +264,94 @@ describe("projection rendering", () => {
 
     expect(rendered?.content).toBe(readFileSync("tests/golden/architecture-projection.md", "utf8"));
   });
+
+  it("renders RFC decision context with alternatives and unresolved questions", () => {
+    const graph = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 4,
+      nodes: {
+        requirements: [
+          {
+            id: "req-001",
+            title: "Export RFCs",
+            type: "functional",
+            statement: "The planner must render RFC projections with decision context.",
+            status: "active"
+          }
+        ],
+        decisions: [
+          {
+            id: "dec-001",
+            title: "Use Markdown RFCs",
+            status: "accepted",
+            selected_option: "Render RFCs as local Markdown files.",
+            rationale: "Keeps decisions reviewable in Git.",
+            rejected_alternatives: ["Hosted decision log"],
+            unresolved_questions: []
+          },
+          {
+            id: "dec-002",
+            title: "External tracker approval",
+            status: "proposed",
+            selected_option: "Sync approvals to GitHub Issues.",
+            rationale: "Teams may want tracker visibility.",
+            rejected_alternatives: ["Local-only approvals"],
+            unresolved_questions: ["Which tracker fields are mandatory?"]
+          }
+        ],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Render RFC projection",
+            execution_state: "backlog",
+            readiness_snapshot: {
+              labels: ["agent_eligible"],
+              reasons: ["Depends on proposed tracker decision."]
+            },
+            acceptance_criteria: ["RFC output includes decision rationale"],
+            validation_methods: [{ type: "test", expected_result: "RFC projection test passes" }]
+          }
+        ],
+        document_projections: [
+          {
+            id: "doc-001",
+            title: "Planner RFC",
+            path: "docs/rfc/planner.md",
+            projection_type: "rfc"
+          }
+        ],
+        execution_slices: []
+      },
+      edges: [
+        {
+          source: "wi-001",
+          target: "req-001",
+          type: "satisfies",
+          rationale: "The Work Item renders RFCs."
+        },
+        {
+          source: "wi-001",
+          target: "dec-002",
+          type: "depends_on",
+          rationale: "Approval sync must be decided before AFK execution."
+        }
+      ]
+    });
+
+    const rendered = renderAllProjections(graph).find(
+      (projection) => projection.path === "docs/rfc/planner.md"
+    );
+
+    expect(rendered?.content).toContain("## Decision Summary");
+    expect(rendered?.content).toContain("dec-001 (accepted): Use Markdown RFCs");
+    expect(rendered?.content).toContain("Selected option: Render RFCs as local Markdown files.");
+    expect(rendered?.content).toContain("Rejected alternatives: Hosted decision log.");
+    expect(rendered?.content).toContain("Unresolved questions: Which tracker fields are mandatory.");
+    expect(rendered?.content).toContain("Affected nodes: `wi-001`.");
+  });
 });

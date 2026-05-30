@@ -90,6 +90,8 @@ export interface RequirementNode extends PlanningNodeBase<"requirement", Require
 export interface DecisionNode extends PlanningNodeBase<"decision", DecisionId> {
   readonly selectedOption: string;
   readonly rationale: string;
+  readonly rejectedAlternatives: readonly string[];
+  readonly unresolvedQuestions: readonly string[];
 }
 
 export interface AssumptionNode extends PlanningNodeBase<"assumption", AssumptionId> {

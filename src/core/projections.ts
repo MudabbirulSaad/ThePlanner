@@ -1,6 +1,7 @@
 import type {
   AssumptionNode,
   ComponentNode,
+  DecisionNode,
   DependencyEdge,
   DocumentProjectionNode,
   OpenQuestionNode,
@@ -140,8 +141,22 @@ ${list(intent?.scaffoldNotes ?? [])}
 }
 
 function renderRfcBody(graph: PlanningGraph): string {
-  const decisions = graph.nodes.filter((node) => node.kind === "decision");
-  return `## Decisions\n\n${list(decisions.map((node) => `${node.id}: ${node.title}`))}\n`;
+  const decisions = graph.nodes.filter(isDecision).sort(compareById);
+  const accepted = decisions.filter((node) => node.status === "accepted");
+  const unresolved = decisions.filter((node) => node.status === "proposed" || node.status === "revisit");
+
+  return `## Decision Summary
+
+${list(decisions.map((node) => `${node.id} (${node.status}): ${node.title}`))}
+
+## Accepted Decisions
+
+${list(accepted.map((node) => renderDecision(graph, node)))}
+
+## Proposed / Revisit Decisions
+
+${list(unresolved.map((node) => renderDecision(graph, node)))}
+`;
 }
 
 function renderArchitectureBody(graph: PlanningGraph): string {
@@ -250,6 +265,24 @@ function renderOpenQuestion(node: OpenQuestionNode): string {
 function renderRisk(node: RiskNode): string {
   const blocker = node.blocksAfk ? "Blocks AFK." : "Does not block AFK.";
   return `${node.id} (${node.likelihood} likelihood, ${node.impact} impact): ${node.title}. Mitigation: ${node.mitigation} ${blocker}`;
+}
+
+function renderDecision(graph: PlanningGraph, node: DecisionNode): string {
+  const affectedNodes = graph.edges
+    .filter((edge) => edge.source === node.id || edge.target === node.id)
+    .map((edge) => (edge.source === node.id ? edge.target : edge.source))
+    .sort();
+  const alternatives = node.rejectedAlternatives.length === 0
+    ? "None captured."
+    : node.rejectedAlternatives.map((alternative) => trimSentence(alternative)).join("; ") + ".";
+  const questions = node.unresolvedQuestions.length === 0
+    ? "None."
+    : node.unresolvedQuestions.map((question) => trimSentence(question)).join("; ") + ".";
+  const affected = affectedNodes.length === 0
+    ? "None recorded."
+    : affectedNodes.map((id) => `\`${id}\``).join(", ");
+
+  return `${node.id} (${node.status}): ${node.title}. Selected option: ${trimSentence(node.selectedOption)}. Rationale: ${trimSentence(node.rationale)}. Rejected alternatives: ${alternatives} Unresolved questions: ${questions} Affected nodes: ${affected}.`;
 }
 
 function renderComponent(node: ComponentNode): string {
@@ -361,6 +394,10 @@ function isOpenQuestion(node: PlanningNode): node is OpenQuestionNode {
 
 function isRisk(node: PlanningNode): node is RiskNode {
   return node.kind === "risk";
+}
+
+function isDecision(node: PlanningNode): node is DecisionNode {
+  return node.kind === "decision";
 }
 
 function isComponent(node: PlanningNode): node is ComponentNode {

@@ -91,6 +91,39 @@ describe("graph validation and readiness", () => {
     expect(result.semanticErrors.map((error) => error.code)).toContain("invalid_afk_readiness");
   });
 
+  it("keeps Work Items depending on proposed or revisit Decisions out of AFK readiness", () => {
+    const raw = cloneGraph();
+    const workItem = raw.nodes.work_items.find((node: { id: string }) => node.id === "wi-006");
+    workItem.execution_state = "backlog";
+    workItem.readiness_snapshot.labels = ["agent_eligible"];
+    raw.nodes.decisions[0].status = "proposed";
+    raw.nodes.decisions[1].status = "revisit";
+    raw.edges.push(
+      {
+        source: "wi-006",
+        target: "dec-001",
+        type: "depends_on",
+        rationale: "Proposed decision blocks AFK execution."
+      },
+      {
+        source: "wi-006",
+        target: "dec-002",
+        type: "depends_on",
+        rationale: "Revisit decision blocks AFK execution."
+      }
+    );
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
+      "Depends on unresolved Decision dec-001.",
+      "Depends on unresolved Decision dec-002."
+    ]);
+    expect(result.readinessSummary.afkReady).not.toContain("wi-006");
+  });
+
   it("detects missing edge references, blocker causes, and Work Item cycles", () => {
     const raw = cloneGraph();
     raw.edges.push(

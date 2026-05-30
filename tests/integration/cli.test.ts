@@ -526,7 +526,16 @@ describe("planner CLI use case wiring", () => {
       });
       expect(validatePlanningGraph(parsePlanningGraphJson(output.graph)).status).toBe("pass");
       expect(output.graph.nodes.work_items).toHaveLength(3);
-      expect(output.graph.nodes.document_projections).toHaveLength(3);
+      expect(output.graph.nodes.document_projections).toHaveLength(4);
+      expect(output.graph.nodes.document_projections).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "doc-003",
+            path: "docs/rfc/proposed-decisions.md",
+            projection_type: "rfc"
+          })
+        ])
+      );
       expect(await listWorkspaceFiles(".")).toEqual(before);
     } finally {
       process.chdir(originalCwd);

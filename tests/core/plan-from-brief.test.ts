@@ -79,9 +79,72 @@ describe("plan from refined brief proposal", () => {
     expect(first.graph.nodes.filter((node) => node.kind === "document_projection").map((node) => node.id)).toEqual([
       "doc-001",
       "doc-002",
-      "doc-003"
+      "doc-003",
+      "doc-004"
     ]);
     expect(first.graph.nodes.filter((node) => node.kind === "execution_slice")).toHaveLength(1);
+  });
+
+  it("extracts accepted and unresolved Decisions from refined brief decision language", () => {
+    const proposal = proposePlanningGraphFromBrief({
+      sourcePath: "brief.md",
+      content: [
+        "# Refined Brief",
+        "",
+        "## Product Summary",
+        "",
+        "Build a repository planning assistant.",
+        "",
+        "## MVP Scope",
+        "",
+        "Generate planning graphs and RFC projections.",
+        "",
+        "## Success Criteria",
+        "",
+        "Generated artifacts are deterministic.",
+        "",
+        "## Decisions",
+        "",
+        "- Accepted: Use local Markdown projections. Rationale: Keeps review Git-native. Alternatives: database-backed docs, hosted wiki.",
+        "- Proposed: Use GitHub Issues sync. Rationale: Teams may want tracker visibility. Alternatives: Linear sync. Questions: Which tracker fields are required?",
+        "- Revisit: Use a web approval UI. Rationale: CLI review may be enough for V1. Alternatives: editor extension. Questions: When does interactive approval become necessary?"
+      ].join("\n")
+    });
+
+    const decisions = proposal.graph.nodes.filter((node) => node.kind === "decision");
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        id: "dec-001",
+        status: "accepted",
+        selectedOption: "Use local Markdown projections.",
+        rationale: "Keeps review Git-native.",
+        rejectedAlternatives: ["database-backed docs", "hosted wiki."],
+        unresolvedQuestions: []
+      }),
+      expect.objectContaining({
+        id: "dec-002",
+        status: "proposed",
+        selectedOption: "Use GitHub Issues sync.",
+        unresolvedQuestions: ["Which tracker fields are required?"]
+      }),
+      expect.objectContaining({
+        id: "dec-003",
+        status: "revisit",
+        selectedOption: "Use a web approval UI.",
+        unresolvedQuestions: ["When does interactive approval become necessary?"]
+      })
+    ]);
+    expect(proposal.graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "wi-001", target: "dec-001", type: "references" }),
+        expect.objectContaining({ source: "wi-001", target: "dec-002", type: "depends_on" }),
+        expect.objectContaining({ source: "wi-002", target: "dec-003", type: "depends_on" })
+      ])
+    );
+    expect(validatePlanningGraph(proposal.graph).readinessSnapshots["wi-001"]?.labels).toEqual([
+      "agent_eligible",
+      "blocked"
+    ]);
   });
 
   it("rejects an empty refined brief", () => {

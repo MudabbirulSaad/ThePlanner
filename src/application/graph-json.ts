@@ -80,6 +80,8 @@ export function parsePlanningGraphJson(value: unknown): PlanningGraph {
         status: text(node.status),
         selectedOption: text(node.selected_option),
         rationale: text(node.rationale),
+        rejectedAlternatives: strings(node.rejected_alternatives),
+        unresolvedQuestions: strings(node.unresolved_questions),
         provenance: provenance(node.provenance)
       })),
       ...(raw.nodes.assumptions ?? []).map((node) => ({
@@ -198,6 +200,8 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
         status: node.status,
         selected_option: node.selectedOption,
         rationale: node.rationale,
+        rejected_alternatives: node.rejectedAlternatives,
+        unresolved_questions: node.unresolvedQuestions,
         provenance: serializeProvenance(node.provenance)
       })),
       assumptions: graph.nodes.filter(isAssumption).map((node) => ({

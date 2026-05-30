@@ -1,5 +1,6 @@
 import type {
   ComponentNode,
+  DecisionNode,
   DependencyEdge,
   DocumentProjectionNode,
   ExecutionSliceNode,
@@ -31,6 +32,7 @@ type BriefSectionKey =
   | "non_goals"
   | "constraints"
   | "success_criteria"
+  | "decisions"
   | "open_questions"
   | "raw_idea";
 
@@ -45,6 +47,10 @@ const sectionKeys: Readonly<Record<string, BriefSectionKey>> = {
   "non goals": "non_goals",
   constraints: "constraints",
   "success criteria": "success_criteria",
+  decisions: "decisions",
+  "decision log": "decisions",
+  "architecture decisions": "decisions",
+  "product decisions": "decisions",
   "open questions": "open_questions",
   "raw idea": "raw_idea"
 };
@@ -66,13 +72,14 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
 
   const productIntent = buildProductIntent(sections, provenance, scaffoldedFields);
   const requirements = buildRequirements(sections, provenance, scaffoldedFields);
+  const decisions = buildDecisions(sections, provenance, scaffoldedFields);
   const openQuestions = buildOpenQuestions(sections, provenance, scaffoldedFields);
   const risks = buildRisks(sections, provenance, scaffoldedFields);
   const components = buildComponents(sections, scaffoldedFields);
   const workItems = buildWorkItems(requirements, components.length > 0, scaffoldedFields);
   const documents = buildDocumentProjections();
   const slices = buildExecutionSlices(workItems);
-  const edges = buildEdges(requirements, risks, components, workItems, documents);
+  const edges = buildEdges(requirements, decisions, risks, components, workItems, documents);
 
   return {
     graph: {
@@ -80,7 +87,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
       graphVersion: graphVersion(1),
       source: sourceReference,
       productIntent,
-      nodes: [...requirements, ...openQuestions, ...risks, ...components, ...workItems, ...documents, ...slices],
+      nodes: [...requirements, ...decisions, ...openQuestions, ...risks, ...components, ...workItems, ...documents, ...slices],
       edges
     },
     scaffoldedFields
@@ -96,6 +103,7 @@ function parseBriefSections(content: string): BriefSections {
     non_goals: [],
     constraints: [],
     success_criteria: [],
+    decisions: [],
     open_questions: [],
     raw_idea: []
   };
@@ -229,6 +237,128 @@ function buildRequirements(
   }
 
   return requirements;
+}
+
+function buildDecisions(
+  sections: BriefSections,
+  provenance: Provenance,
+  scaffoldedFields: string[]
+): readonly DecisionNode[] {
+  const explicitDecisionLines = sections.decisions;
+  const inferredDecisionLines = [...sections.constraints, ...sections.mvp_scope, ...sections.goals].filter((line) =>
+    /\b(accepted|decided|decision|choose|chose|use|proposed|revisit|alternative|option|rationale)\b/iu.test(line)
+  );
+  const source = [
+    ...explicitDecisionLines.map((line) => ({ line, defaultStatus: "accepted" as const })),
+    ...inferredDecisionLines.map((line) => ({ line, defaultStatus: "proposed" as const }))
+  ]
+    .slice(0, 4)
+    .map(({ line, defaultStatus }) => parseDecisionLine(line, defaultStatus))
+    .filter((decision): decision is ParsedDecision => decision !== undefined);
+
+  if (source.length === 0) {
+    scaffoldedFields.push("Decisions omitted because no explicit decision language was present.");
+  }
+
+  return source.map((decision, index) => ({
+    id: stableId(`dec-${String(index + 1).padStart(3, "0")}`, "dec"),
+    kind: "decision",
+    title: titleFrom(decision.selectedOption, `Decision ${index + 1}`),
+    status: decision.status,
+    selectedOption: decision.selectedOption,
+    rationale: decision.rationale,
+    rejectedAlternatives: decision.rejectedAlternatives,
+    unresolvedQuestions: decision.unresolvedQuestions,
+    provenance
+  }));
+}
+
+type ParsedDecision = Pick<
+  DecisionNode,
+  "status" | "selectedOption" | "rationale" | "rejectedAlternatives" | "unresolvedQuestions"
+>;
+
+function parseDecisionLine(
+  line: string,
+  defaultStatus: Extract<DecisionNode["status"], "accepted" | "proposed">
+): ParsedDecision | undefined {
+  const status = decisionStatusFrom(line);
+  if (!status && !sectionsLineLooksLikeDecision(line)) {
+    return undefined;
+  }
+
+  const selectedOption = cleanDecisionOption(extractDecisionField(line, ["selected option", "option", "decision", "choose", "use"]) ?? line);
+  const rationale = cleanDecisionOption(extractDecisionField(line, ["rationale", "because", "why"]) ?? "Rationale not captured in the refined brief.");
+  const rejectedAlternatives = splitDecisionList(
+    extractDecisionField(line, ["rejected alternatives", "alternatives", "rejected", "not"])
+  );
+  const unresolvedQuestions = splitDecisionList(
+    extractDecisionField(line, ["unresolved questions", "questions", "question", "revisit"])
+  );
+
+  return {
+    status: status ?? (unresolvedQuestions.length > 0 ? "proposed" : defaultStatus),
+    selectedOption,
+    rationale,
+    rejectedAlternatives,
+    unresolvedQuestions
+  };
+}
+
+function decisionStatusFrom(line: string): DecisionNode["status"] | undefined {
+  if (/^\s*(accepted|decided|chosen)\s*:/iu.test(line) || /\b(status:\s*)?accepted\b/iu.test(line)) {
+    return "accepted";
+  }
+
+  if (/^\s*(revisit|defer|deferred)\s*:/iu.test(line) || /\b(status:\s*)?revisit\b/iu.test(line)) {
+    return "revisit";
+  }
+
+  if (/^\s*(proposed|proposal|candidate)\s*:/iu.test(line) || /\b(status:\s*)?proposed\b/iu.test(line)) {
+    return "proposed";
+  }
+
+  return undefined;
+}
+
+function sectionsLineLooksLikeDecision(line: string): boolean {
+  return /\b(decision|selected option|rationale|alternatives?|choose|chose|use)\b/iu.test(line);
+}
+
+function extractDecisionField(line: string, labels: readonly string[]): string | undefined {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const match = new RegExp(`\\b${escaped}\\s*:\\s*(?<value>.+?)(?=\\s+\\b(?:status|decision|selected option|option|rationale|because|why|rejected alternatives|alternatives|rejected|unresolved questions|questions|question|revisit|not)\\s*:|$)`, "iu").exec(line);
+    const value = match?.groups?.value.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  const because = /\bbecause\s+(?<value>.+)$/iu.exec(line)?.groups?.value.trim();
+  if (labels.includes("because") && because) {
+    return because;
+  }
+
+  return undefined;
+}
+
+function cleanDecisionOption(value: string): string {
+  return value
+    .replace(/^\s*(accepted|decided|chosen|proposed|proposal|candidate|revisit|defer|deferred)\s*:\s*/iu, "")
+    .replace(/\s+\b(status|rationale|because|why|rejected alternatives|alternatives|rejected|unresolved questions|questions|question|revisit|not)\s*:.+$/iu, "")
+    .trim();
+}
+
+function splitDecisionList(value: string | undefined): readonly string[] {
+  if (!value) {
+    return [];
+  }
+
+  return value
+    .split(/\s*(?:;|,|\bor\b)\s*/iu)
+    .map((item) => cleanDecisionOption(item))
+    .filter((item) => item.length > 0);
 }
 
 function buildOpenQuestions(
@@ -456,6 +586,14 @@ function buildDocumentProjections(): readonly DocumentProjectionNode[] {
     {
       id: stableId("doc-003", "doc"),
       kind: "document_projection",
+      title: "Proposed RFC",
+      status: "active",
+      path: "docs/rfc/proposed-decisions.md",
+      projectionType: "rfc"
+    },
+    {
+      id: stableId("doc-004", "doc"),
+      kind: "document_projection",
       title: "Proposed Dependencies",
       status: "active",
       path: "planning/dependencies.md",
@@ -479,6 +617,7 @@ function buildExecutionSlices(workItems: readonly WorkItemNode[]): readonly Exec
 
 function buildEdges(
   requirements: readonly RequirementNode[],
+  decisions: readonly DecisionNode[],
   risks: readonly RiskNode[],
   components: readonly ComponentNode[],
   workItems: readonly WorkItemNode[],
@@ -494,6 +633,27 @@ function buildEdges(
       type: "satisfies",
       rationale: "Dry-run Work Item traces to a requirement inferred from the refined brief."
     });
+  }
+
+  for (const decision of decisions) {
+    if (decision.status === "accepted") {
+      edges.push({
+        source: workItems[0].id,
+        target: decision.id,
+        type: "references",
+        rationale: "Work Item references an accepted decision inferred from the refined brief."
+      });
+      continue;
+    }
+
+    for (const workItem of workItems) {
+      edges.push({
+        source: workItem.id,
+        target: decision.id,
+        type: "depends_on",
+        rationale: "Unresolved decision must be accepted before AFK execution."
+      });
+    }
   }
 
   for (const risk of risks) {
