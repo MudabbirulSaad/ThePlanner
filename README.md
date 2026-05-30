@@ -31,6 +31,38 @@ Version `0.1.1` adds the dogfooded planning loop for product-grade artifacts and
 - Read-only `scan repo --dry-run` context discovery.
 - Reconciliation for deterministic Open Question edits in PRD and architecture projections.
 
+## Strategic Roadmap
+
+The next architecture direction is the Graph Operation pipeline. ThePlanner will integrate Codex, Claude, Gemini, and other LLM-backed proposal sources without allowing them to write canonical planning state directly.
+
+Architecture references:
+
+- [ADR 0004: Graph Operation Pipeline for LLM Adapters](docs/adr/0004-graph-operation-pipeline-for-llm-adapters.md)
+- [RFC: Graph Operation LLM Pipeline](docs/rfc/graph-operation-llm-pipeline.md)
+
+Core rule:
+
+- LLMs are proposal engines only.
+- LLM adapters must not write `planning/graph.json`, `planning/graph.schema.json`, Markdown projections, run audit files, or `planning/change-log.ndjson` directly.
+- LLM adapters return structured `ProposedGraphOperation` objects such as `AddOpenQuestion`, `AddRequirement`, `AddDecision`, `AddWorkItem`, `AddDependencyEdge`, `AddHitlGate`, or `UpdateWorkItemExecutionState`.
+- Core graph-operation logic applies proposals to a candidate graph deterministically.
+- JSON Schema validation and semantic Graph Validation must pass before any canonical graph mutation.
+- Commitment-changing, scope-changing, risk-changing, readiness-changing, or safety-relevant operations require Graph Operation Approval before apply.
+- Only validated and approved operations can increment graph version, save `planning/graph.json`, append `planning/change-log.ndjson`, and trigger projection regeneration.
+
+Three-phase roadmap:
+
+- Phase 1, Control Layer: add `src/core/graph-operations.ts` for operation types, deterministic candidate-graph application, provenance, approval classification, and strict rejection of untestable LLM-proposed Work Items.
+- Phase 2, Grilling Interface: add the application-layer `GraphOperationProposer` port. LLMs that lack context should propose `AddOpenQuestion` operations; user answers then feed back as proposed requirements, decisions, assumptions, risks, or HITL gates.
+- Phase 3, Real LLM Integration and Autonomous Review: implement provider adapters under `src/adapters/llm/`, compact execution context to the active Execution Slice plus immediate Dependency Edges, and add a reviewer LLM hook that proposes graph operations from run results and validation output.
+
+Strict LLM Work Item rule:
+
+- An LLM-proposed Work Item must include Acceptance Criteria.
+- It must include at least one executable command or test Validation Method.
+- It must include context summary, boundary notes, traceability, and safe-failure guidance before it can become canonical.
+- Missing testability is a validation failure, not a warning.
+
 ## Setup
 
 Requires Node.js 22 or newer.
@@ -213,14 +245,30 @@ If `reconcile --json` returns `proposedPatches`, review them before using `--app
 
 The repository follows Hexagonal Architecture:
 
-- `src/core/`: pure domain logic for graph types, validation, readiness, projection rendering, and reconciliation.
-- `src/application/`: use cases and ports for graph storage, projection IO, CLI orchestration, and change-log writing.
-- `src/adapters/`: CLI and filesystem adapter implementations.
+- `src/core/`: pure domain logic for graph types, graph operations, validation, readiness, projection rendering, and reconciliation.
+- `src/application/`: use cases and ports for graph storage, projection IO, CLI orchestration, graph operation proposal, approval orchestration, agent context selection, and change-log writing.
+- `src/adapters/`: CLI, filesystem, process, tracker, schema, repo-scan, and future LLM provider implementations.
 - `tests/core/`: domain tests.
 - `tests/application/`: use-case tests with fakes.
 - `tests/integration/`: CLI and dependency-boundary tests.
 
 `src/core/**` must not import CLI, filesystem, Git, LLM provider, Repo Scan, schema adapter, or other infrastructure code.
+
+Future LLM provider code belongs under `src/adapters/llm/`. These adapters may call provider APIs and parse provider output, but they must satisfy application-layer ports and return proposed graph operations. They must not import graph repositories or projection writers, and they must not directly mutate canonical files.
+
+The intended flow is:
+
+```text
+Intake Brief / user answer / run result
+  -> GraphOperationProposer port
+  -> src/adapters/llm/<provider> proposal adapter
+  -> ProposedGraphOperation JSON
+  -> core graph-operation candidate apply
+  -> JSON Schema validation
+  -> semantic Graph Validation
+  -> Graph Operation Approval when required
+  -> graph save, change-log append, projection regeneration
+```
 
 ## Known V1 Limitations
 
@@ -229,6 +277,7 @@ The repository follows Hexagonal Architecture:
 - Reconciliation intentionally treats `planning/graph.json` as canonical. It can propose patches for selected Work Item fields and deterministic Open Question edits in PRD/architecture projections, but decision/component/risk references and freeform implementation notes are reported as unsupported/deferred.
 - External tracker sync is limited to `sync github --dry-run --json`; live external issue creation and credentialed tracker APIs are deferred.
 - LLM cloud API adapters and live provider calls are not implemented.
+- The Graph Operation pipeline is documented as the next architecture direction but is not implemented yet.
 - `theplanner run` executes only one selected local CLI agent for one Work Item and then runs the Work Item validation commands. Multi-agent orchestration, automatic Work Item state changes, and autonomous acceptance/rejection remain deferred.
 - Validation commands are executed directly as argv-style process commands. Shell operators such as `&&` require an explicit shell command wrapper.
 - Run ids and audit event ids currently use second-level timestamps plus an in-process counter. Avoid starting multiple runs or opposite accept/reject decisions for the same run in the same second until id uniqueness is hardened.

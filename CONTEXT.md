@@ -156,9 +156,29 @@ _Avoid_: CLI-coupled core, filesystem-first domain, provider-locked planner
 A swappable adapter that proposes graph operations, clarification prompts, projections, reconciliation patches, summaries, or candidate risks, assumptions, and decisions.
 _Avoid_: Source of truth, domain rule engine, direct graph writer
 
+**Graph Operation**:
+A deterministic domain command that describes one intended mutation to the **Planning Graph**, such as adding an **Open Question**, adding a **Requirement**, adding a **Decision**, adding a **Work Item**, adding a **Dependency Edge**, updating **Execution State**, or archiving a node.
+_Avoid_: Raw JSON patch, provider response, direct file edit
+
+**Proposed Graph Operation**:
+A structured, untrusted graph operation candidate produced by an **LLM Adapter**, **Graph Reconciliation**, **Repo Scan**, CLI flow, or future integration before schema validation, semantic **Graph Validation**, and required approval.
+_Avoid_: Accepted graph change, generated graph, direct mutation
+
+**GraphOperationProposer**:
+An application-layer port that asks a proposal source to return **Proposed Graph Operations** from an **Intake Brief**, user answer, repo context, run result, or review artifact.
+_Avoid_: LLM client, planner core, mutation service
+
 **Graph Operation Approval**:
 The rule set determining which proposed graph operations require explicit **Primary User** approval before they affect canonical planning state.
 _Avoid_: Auto-accept all, hidden mutation, prompt consent
+
+**Grilling Session**:
+The clarification workflow where the planner turns uncertainty into proposed **Open Questions**, asks the **Primary User** for answers, and feeds those answers back into the proposal pipeline as candidate **Requirements**, **Decisions**, **Assumptions**, or **HITL Gates**.
+_Avoid_: Freeform chat, provider conversation history, hidden assumptions
+
+**Reviewer LLM**:
+An **LLM Adapter** role that reviews an executor run result, validation output, and relevant graph context, then proposes follow-up **Graph Operations** rather than directly changing the graph, files, or Git history.
+_Avoid_: Automatic merger, final authority, direct committer
 
 **Planning Change Log**:
 A lightweight repository-committed audit log of meaningful graph changes and approvals.
@@ -278,6 +298,14 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 - The system uses **Hexagonal Architecture** so the core planner is independent from the CLI, filesystem, Git, LLM provider, **Repo Scan**, JSON Schema validation, and future web/editor/tracker integrations.
 - The core domain contains the **Planning Graph**, nodes, edges, validation rules, readiness calculation, projection generation, and reconciliation logic.
 - Adapters handle CLI input/output, file writing, Git, LLM calls, **Repo Scan**, JSON Schema validation, and future GitHub/Linear/Jira sync.
+- **Graph Operations** live in the core domain because they define valid canonical graph mutation semantics.
+- **GraphOperationProposer** lives in the application layer because it is a port for proposal sources, not a provider implementation.
+- Codex, Claude, Gemini, and other provider-specific **LLM Adapters** live under `src/adapters/llm/` and satisfy application-layer proposal ports.
+- **LLM Adapters** must not import filesystem graph repositories, projection writers, Git adapters, or any writer that can mutate `planning/graph.json` or generated Markdown projections.
+- **LLM Adapters** must not write directly to `planning/graph.json`, `planning/graph.schema.json`, PRD projections, RFC projections, Architecture projections, **Work Item Projections**, dependency views, or `planning/change-log.ndjson`.
+- **LLM Adapters** may return only structured **Proposed Graph Operations**, clarification prompts, summaries, or review findings to the application layer.
+- The application layer may build a candidate graph by applying **Proposed Graph Operations** through core domain logic, then run schema validation and semantic **Graph Validation** before any canonical save.
+- Only validated and approved **Graph Operations** may be applied to the canonical **Planning Graph** and recorded in the **Planning Change Log**.
 - Initial source layout separates `src/core/`, `src/application/`, `src/adapters/`, and `src/templates/`.
 - `src/core/` contains graph, validation, readiness, projection, reconciliation, approval, and shared domain code.
 - `src/application/` contains use cases and ports for filesystem, Git, LLM, **Repo Scan**, schema validation, and export writing.
@@ -290,6 +318,15 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 - The V1 local CLI binary name is `planner`, with a more distinctive public command name deferred until product naming is settled.
 - An **LLM Adapter** may propose draft graph changes from an **Intake Brief**, **Structured Clarification** prompts, **Document Projections**, **Graph Reconciliation** patches, **Repo Scan** summaries, and candidate risks, assumptions, or decisions.
 - **LLM Adapter** output is treated as proposed graph operations and cannot directly mutate `planning/graph.json` without validation and approval where required.
+- A **Proposed Graph Operation** is untrusted until it passes operation-shape checks, produces a valid candidate **Planning Graph**, passes semantic **Graph Validation**, and satisfies **Graph Operation Approval** rules.
+- A **Proposed Graph Operation** must include **Provenance** showing the proposal source, prompt or artifact reference, provider or adapter name when relevant, and confidence where inference is involved.
+- LLM-proposed **Work Items** must include **Acceptance Criteria**, an executable command or test **Validation Method**, context summary, boundary notes, traceability, and **Safe-Failure Expectation** before they can enter the canonical graph.
+- LLM-proposed **Work Items** that lack executable validation are rejected rather than downgraded to vague manual checks.
+- LLM-proposed **Decisions** that affect scope, architecture, data, security, cost, integration choices, user promises, or execution safety require **Graph Operation Approval** before they become accepted **Decisions**.
+- LLM-proposed **Open Questions** may be auto-drafted when low risk, but any answer that changes commitments must come back through **Graph Operations**.
+- During a **Grilling Session**, missing context becomes **Open Questions** first; user answers then become candidate **Requirements**, **Decisions**, **Assumptions**, risks, or **HITL Gates**.
+- A **Reviewer LLM** may inspect executor output, validation results, and run artifacts, but it may only propose **Graph Operations** such as updating **Execution State**, adding a follow-up **Work Item**, adding a **HITL Gate**, or recording an **Open Question**.
+- A failing reviewer or validation result must not trigger continuous retry loops; it should create or propose a **HITL Gate** or blocked **Work Item** state with a clear cause.
 - Prompts and templates live in adapter or application layers, not the core domain.
 - Deterministic **Graph Validation** has final say on **AFK-ready** labels.
 - **Graph Operation Approval** is required for operations that change commitment, risk, readiness, scope, or execution safety.
@@ -307,6 +344,8 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 - Schema tests verify `planning/graph.schema.json` accepts valid graph shapes and rejects invalid ones.
 - CLI integration tests verify deterministic files and exit codes.
 - LLM adapter tests use fixtures or fakes, not live provider calls.
+- **Graph Operation** tests cover deterministic application, validation failures, provenance, approval requirements, graph version changes, and rejection of untestable LLM-proposed **Work Items**.
+- **GraphOperationProposer** application tests use fake proposers and prove adapters cannot bypass validation or canonical graph application rules.
 - **Repo Scan** tests use small fixture repositories.
 - **AFK-ready** derivation has regression tests for every blocking condition.
 - Tests enforce **Hexagonal Architecture** so core domain code does not import CLI, filesystem, Git, LLM provider, or **Repo Scan** adapters.
@@ -451,6 +490,21 @@ _Avoid_: Automatic revert, vague rollback, ignore failure
 >
 > **Dev:** "Can an LLM mark work AFK-ready?"
 > **Domain expert:** "No — an **LLM Adapter** can propose changes, but deterministic **Graph Validation** decides **AFK-ready** labels."
+>
+> **Dev:** "Can Codex update `planning/graph.json` directly after reading a brief?"
+> **Domain expert:** "No — Codex is an **LLM Adapter** in this context. It must return **Proposed Graph Operations** that core domain logic validates before any canonical graph write."
+>
+> **Dev:** "Is a Proposed Graph Operation already safe because it came from Claude or Gemini?"
+> **Domain expert:** "No — every **Proposed Graph Operation** is untrusted until schema validation, semantic **Graph Validation**, and required **Graph Operation Approval** pass."
+>
+> **Dev:** "What should the planner do when an LLM lacks enough context?"
+> **Domain expert:** "It should propose **Open Questions** and enter a **Grilling Session**, not invent requirements or silently accept assumptions."
+>
+> **Dev:** "Can an LLM create a Work Item without a test command?"
+> **Domain expert:** "No — an LLM-proposed **Work Item** must include **Acceptance Criteria** and an executable **Validation Method**, otherwise the proposal is rejected."
+>
+> **Dev:** "Can a reviewer agent mark the Work Item done?"
+> **Domain expert:** "No — a **Reviewer LLM** can propose an execution-state **Graph Operation** after validation passes; canonical state changes still flow through graph operation validation and approval policy."
 >
 > **Dev:** "Can the planner accept an architecture decision automatically?"
 > **Domain expert:** "No — **Graph Operation Approval** requires explicit approval for commitment-changing operations."

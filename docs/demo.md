@@ -48,6 +48,12 @@ Reconciliation reads Work Item Markdown and proposes safe V1 graph patches where
 
 The planning change log at `planning/change-log.ndjson` records graph-changing events with graph version transitions, affected nodes, approval status, summary, and provenance. Applied reconciliation patches write a change-log event.
 
+## LLM Roadmap
+
+The next LLM integration path uses the Graph Operation pipeline. Codex, Claude, Gemini, and future providers will act as proposal engines only. They must return structured Proposed Graph Operations, and they must not write `planning/graph.json`, Markdown projections, or the planning change log directly.
+
+The intended flow is proposal first, validation second, approval when required, then canonical graph apply and projection regeneration. LLM-proposed Work Items must include Acceptance Criteria and executable validation commands before they can enter canonical planning state.
+
 ## Known V1 Limitations
 
 - No live LLM calls.
