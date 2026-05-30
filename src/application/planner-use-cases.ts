@@ -12,6 +12,8 @@ import {
 } from "../core/index.js";
 import type {
   GraphValidationResult,
+  DecisionNode,
+  GraphOperationApprovalCategory,
   IntakeQuestionSet,
   OpenQuestionNode,
   PlanningGraph,
@@ -19,6 +21,7 @@ import type {
   ProposedGraphOperation,
   Provenance,
   ReconciliationResult,
+  RequirementNode,
   RenderedProjection,
   WorkItemNode
 } from "../core/index.js";
@@ -791,6 +794,9 @@ export async function graphOperationDryRunUseCase(args: {
   readonly operation: string;
   readonly graphVersionBefore: number;
   readonly graphVersionAfter: number;
+  readonly approvalRequired: boolean;
+  readonly approvalCategory: string;
+  readonly approvalRationale: string;
   readonly candidateGraph?: unknown;
   readonly operationErrors: readonly {
     readonly code: string;
@@ -813,6 +819,9 @@ export async function graphOperationDryRunUseCase(args: {
       operation: operation.kind,
       graphVersionBefore: graph.graphVersion,
       graphVersionAfter: graph.graphVersion,
+      approvalRequired: false,
+      approvalCategory: "none",
+      approvalRationale: "Operation was rejected before approval classification.",
       operationErrors: applyResult.errors,
       validation: validatePlanningGraph(graph),
       message: "Proposed Graph Operation was rejected before candidate validation. No planning files were written."
@@ -829,6 +838,9 @@ export async function graphOperationDryRunUseCase(args: {
       operation: operation.kind,
       graphVersionBefore: graph.graphVersion,
       graphVersionAfter: applyResult.candidateGraph.graphVersion,
+      approvalRequired: applyResult.approval.required,
+      approvalCategory: applyResult.approval.category,
+      approvalRationale: applyResult.approval.rationale,
       candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
       operationErrors: validation.semanticErrors.map((error) => ({
         code: error.code,
@@ -848,6 +860,9 @@ export async function graphOperationDryRunUseCase(args: {
     operation: operation.kind,
     graphVersionBefore: graph.graphVersion,
     graphVersionAfter: applyResult.candidateGraph.graphVersion,
+    approvalRequired: applyResult.approval.required,
+    approvalCategory: applyResult.approval.category,
+    approvalRationale: applyResult.approval.rationale,
     candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
     operationErrors: [],
     validation,
@@ -1393,39 +1408,111 @@ function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation
   const operation = parseJsonObjectProperty(value, "Proposed Graph Operation");
   const operationName = readString(operation.operation ?? operation.kind, "operation");
 
-  if (operationName !== "add_open_question" && operationName !== "AddOpenQuestion") {
-    throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
+  if (operationName === "add_open_question" || operationName === "AddOpenQuestion") {
+    const rawOpenQuestion = parseJsonObjectProperty(operation.open_question ?? operation.openQuestion, "open_question");
+    const openQuestion: OpenQuestionNode = {
+      id: readString(rawOpenQuestion.id, "open_question.id") as OpenQuestionNode["id"],
+      kind: "open_question",
+      title: readString(rawOpenQuestion.title, "open_question.title"),
+      status: "active",
+      question: readString(rawOpenQuestion.question, "open_question.question"),
+      priority: readString(rawOpenQuestion.priority, "open_question.priority") as OpenQuestionNode["priority"],
+      blocksExecution: readBoolean(rawOpenQuestion.blocks_execution ?? rawOpenQuestion.blocksExecution, "open_question.blocks_execution"),
+      ...readOptionalProvenance(rawOpenQuestion, "open_question")
+    };
+
+    return {
+      kind: "AddOpenQuestion",
+      openQuestion
+    };
   }
 
-  const rawOpenQuestion = parseJsonObjectProperty(operation.open_question ?? operation.openQuestion, "open_question");
-  const rawProvenance = rawOpenQuestion.provenance
-    ? parseJsonObjectProperty(rawOpenQuestion.provenance, "open_question.provenance")
-    : undefined;
-  const provenance: Provenance | undefined = rawProvenance
-    ? {
-        sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, "open_question.provenance.source_type") as Provenance["sourceType"],
-        sourceReference: readString(
-          rawProvenance.source_reference ?? rawProvenance.sourceReference,
-          "open_question.provenance.source_reference"
-        ),
-        createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, "open_question.provenance.created_by"),
-        confidence: readString(rawProvenance.confidence, "open_question.provenance.confidence") as Provenance["confidence"]
-      }
-    : undefined;
-  const openQuestion: OpenQuestionNode = {
-    id: readString(rawOpenQuestion.id, "open_question.id") as OpenQuestionNode["id"],
-    kind: "open_question",
-    title: readString(rawOpenQuestion.title, "open_question.title"),
-    status: "active",
-    question: readString(rawOpenQuestion.question, "open_question.question"),
-    priority: readString(rawOpenQuestion.priority, "open_question.priority") as OpenQuestionNode["priority"],
-    blocksExecution: readBoolean(rawOpenQuestion.blocks_execution ?? rawOpenQuestion.blocksExecution, "open_question.blocks_execution"),
-    ...(provenance ? { provenance } : {})
-  };
+  if (operationName === "add_requirement" || operationName === "AddRequirement") {
+    const rawRequirement = parseJsonObjectProperty(operation.requirement, "requirement");
+    const requirement: RequirementNode = {
+      id: readString(rawRequirement.id, "requirement.id") as RequirementNode["id"],
+      kind: "requirement",
+      title: readString(rawRequirement.title, "requirement.title"),
+      status: readString(rawRequirement.status ?? "active", "requirement.status") as RequirementNode["status"],
+      requirementType: readString(rawRequirement.type ?? rawRequirement.requirementType, "requirement.type") as RequirementNode["requirementType"],
+      statement: readString(rawRequirement.statement, "requirement.statement"),
+      ...readOptionalProvenance(rawRequirement, "requirement")
+    };
 
+    return {
+      kind: "AddRequirement",
+      requirement
+    };
+  }
+
+  if (operationName === "add_decision" || operationName === "AddDecision") {
+    const rawDecision = parseJsonObjectProperty(operation.decision, "decision");
+    const decision: DecisionNode = {
+      id: readString(rawDecision.id, "decision.id") as DecisionNode["id"],
+      kind: "decision",
+      title: readString(rawDecision.title, "decision.title"),
+      status: readString(rawDecision.status ?? "proposed", "decision.status") as DecisionNode["status"],
+      selectedOption: readString(rawDecision.selected_option ?? rawDecision.selectedOption, "decision.selected_option"),
+      rationale: readString(rawDecision.rationale, "decision.rationale"),
+      rejectedAlternatives: readStringArray(
+        rawDecision.rejected_alternatives ?? rawDecision.rejectedAlternatives ?? [],
+        "decision.rejected_alternatives"
+      ),
+      unresolvedQuestions: readStringArray(
+        rawDecision.unresolved_questions ?? rawDecision.unresolvedQuestions ?? [],
+        "decision.unresolved_questions"
+      ),
+      ...readOptionalProvenance(rawDecision, "decision")
+    };
+    const rawApprovalClassification = operation.approval_classification ?? operation.approvalClassification;
+
+    return {
+      kind: "AddDecision",
+      decision,
+      ...(rawApprovalClassification
+        ? {
+            approvalClassification: readApprovalClassification(rawApprovalClassification)
+          }
+        : {})
+    };
+  }
+
+  throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
+}
+
+function readOptionalProvenance(
+  rawNode: Record<string, unknown>,
+  path: string
+): { readonly provenance?: Provenance } {
+  if (!rawNode.provenance) {
+    return {};
+  }
+
+  const rawProvenance = parseJsonObjectProperty(rawNode.provenance, `${path}.provenance`);
   return {
-    kind: "AddOpenQuestion",
-    openQuestion
+    provenance: {
+      sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, `${path}.provenance.source_type`) as Provenance["sourceType"],
+      sourceReference: readString(
+        rawProvenance.source_reference ?? rawProvenance.sourceReference,
+        `${path}.provenance.source_reference`
+      ),
+      createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, `${path}.provenance.created_by`),
+      confidence: readString(rawProvenance.confidence, `${path}.provenance.confidence`) as Provenance["confidence"]
+    }
+  };
+}
+
+function readApprovalClassification(value: unknown): {
+  readonly category: GraphOperationApprovalCategory;
+  readonly rationale: string;
+} {
+  const rawApprovalClassification = parseJsonObjectProperty(value, "approval_classification");
+  return {
+    category: readString(
+      rawApprovalClassification.category,
+      "approval_classification.category"
+    ) as GraphOperationApprovalCategory,
+    rationale: readString(rawApprovalClassification.rationale, "approval_classification.rationale")
   };
 }
 
