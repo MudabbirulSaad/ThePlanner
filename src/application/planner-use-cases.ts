@@ -130,6 +130,11 @@ export interface GraphOperationProposalReader {
   readonly readJson: (path: string) => Promise<unknown>;
 }
 
+interface ParsedGraphOperationProposal {
+  readonly operation: ProposedGraphOperation;
+  readonly approved: boolean;
+}
+
 export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
 
 export interface RefinedBriefWriter {
@@ -800,6 +805,7 @@ export async function graphOperationDryRunUseCase(args: {
   readonly approvalRequired: boolean;
   readonly approvalCategory: string;
   readonly approvalRationale: string;
+  readonly affectedNodeIds: readonly string[];
   readonly candidateGraph?: unknown;
   readonly operationErrors: readonly {
     readonly code: string;
@@ -810,8 +816,9 @@ export async function graphOperationDryRunUseCase(args: {
   readonly message: string;
 }> {
   const graph = await args.graphRepository.load();
-  const operation = parseProposedGraphOperationJson(await args.proposalReader.readJson(args.fromPath));
+  const { operation } = parseGraphOperationProposal(await args.proposalReader.readJson(args.fromPath));
   const applyResult = applyGraphOperationToCandidate(graph, operation);
+  const affectedNodeIds = affectedNodeIdsForGraphOperation(operation);
 
   if (applyResult.status === "rejected") {
     return {
@@ -825,6 +832,7 @@ export async function graphOperationDryRunUseCase(args: {
       approvalRequired: false,
       approvalCategory: "none",
       approvalRationale: "Operation was rejected before approval classification.",
+      affectedNodeIds,
       operationErrors: applyResult.errors,
       validation: validatePlanningGraph(graph),
       message: "Proposed Graph Operation was rejected before candidate validation. No planning files were written."
@@ -844,6 +852,7 @@ export async function graphOperationDryRunUseCase(args: {
       approvalRequired: applyResult.approval.required,
       approvalCategory: applyResult.approval.category,
       approvalRationale: applyResult.approval.rationale,
+      affectedNodeIds,
       candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
       operationErrors: validation.semanticErrors.map((error) => ({
         code: error.code,
@@ -866,10 +875,159 @@ export async function graphOperationDryRunUseCase(args: {
     approvalRequired: applyResult.approval.required,
     approvalCategory: applyResult.approval.category,
     approvalRationale: applyResult.approval.rationale,
+    affectedNodeIds,
     candidateGraph: serializePlanningGraphJson(applyResult.candidateGraph),
     operationErrors: [],
     validation,
     message: "Dry run only. Proposed Graph Operation was applied to a validated candidate graph; no planning files were written."
+  };
+}
+
+export async function graphOperationApplyUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly proposalReader: GraphOperationProposalReader;
+  readonly changeLogWriter: ChangeLogWriter;
+  readonly fromPath: string;
+  readonly approved?: boolean;
+  readonly actor?: string;
+  readonly timestamp?: string;
+}): Promise<{
+  readonly status: "applied" | "rejected";
+  readonly dryRun: false;
+  readonly applied: boolean;
+  readonly sourcePath: string;
+  readonly operation: string;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly approvalRequired: boolean;
+  readonly approvalCategory: string;
+  readonly approvalRationale: string;
+  readonly approvalStatus: "not_required" | "approved" | "missing" | "rejected_before_classification";
+  readonly affectedNodeIds: readonly string[];
+  readonly operationErrors: readonly {
+    readonly code: string;
+    readonly message: string;
+    readonly nodeId?: string;
+  }[];
+  readonly validation: GraphValidationResult;
+  readonly graph?: unknown;
+  readonly event?: PlanningChangeLogEvent;
+  readonly message: string;
+}> {
+  const graph = await args.graphRepository.load();
+  const proposal = parseGraphOperationProposal(await args.proposalReader.readJson(args.fromPath));
+  const applyResult = applyGraphOperationToCandidate(graph, proposal.operation);
+  const affectedNodeIds = affectedNodeIdsForGraphOperation(proposal.operation);
+
+  if (applyResult.status === "rejected") {
+    return {
+      status: "rejected",
+      dryRun: false,
+      applied: false,
+      sourcePath: args.fromPath,
+      operation: proposal.operation.kind,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: graph.graphVersion,
+      approvalRequired: false,
+      approvalCategory: "none",
+      approvalRationale: "Operation was rejected before approval classification.",
+      approvalStatus: "rejected_before_classification",
+      affectedNodeIds,
+      operationErrors: applyResult.errors,
+      validation: validatePlanningGraph(graph),
+      message: "Proposed Graph Operation was rejected before candidate validation. No planning files were written."
+    };
+  }
+
+  const validation = validatePlanningGraph(applyResult.candidateGraph);
+  if (validation.status === "error") {
+    return {
+      status: "rejected",
+      dryRun: false,
+      applied: false,
+      sourcePath: args.fromPath,
+      operation: proposal.operation.kind,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: applyResult.candidateGraph.graphVersion,
+      approvalRequired: applyResult.approval.required,
+      approvalCategory: applyResult.approval.category,
+      approvalRationale: applyResult.approval.rationale,
+      approvalStatus: applyResult.approval.required ? "missing" : "not_required",
+      affectedNodeIds,
+      operationErrors: validation.semanticErrors.map((error) => ({
+        code: error.code,
+        message: error.message,
+        ...(error.nodeId ? { nodeId: String(error.nodeId) } : {})
+      })),
+      validation,
+      message: "Candidate graph failed validation. No planning files were written."
+    };
+  }
+
+  const approved = proposal.approved || args.approved === true;
+  if (applyResult.approval.required && !approved) {
+    return {
+      status: "rejected",
+      dryRun: false,
+      applied: false,
+      sourcePath: args.fromPath,
+      operation: proposal.operation.kind,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: applyResult.candidateGraph.graphVersion,
+      approvalRequired: true,
+      approvalCategory: applyResult.approval.category,
+      approvalRationale: applyResult.approval.rationale,
+      approvalStatus: "missing",
+      affectedNodeIds,
+      operationErrors: [
+        {
+          code: "graph_operation_approval_required",
+          message: "Graph Operation requires explicit approval via proposal approved=true or --approved before --apply."
+        }
+      ],
+      validation,
+      message: "Approval-required Graph Operation was refused. No planning files were written."
+    };
+  }
+
+  if (!args.graphRepository.save) {
+    throw new Error("Applying Graph Operation requires a writable graph repository.");
+  }
+
+  const approvalStatus = applyResult.approval.required ? "approved" : "not_required";
+  const event = createChangeLogEvent({
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: applyResult.candidateGraph.graphVersion,
+    affectedNodeIds,
+    actor: args.actor ?? "planner",
+    timestamp: args.timestamp ?? new Date().toISOString(),
+    operationType: proposal.operation.kind,
+    approvalStatus,
+    summary: `Applied ${proposal.operation.kind} from ${args.fromPath}.`,
+    provenanceReference: `theplanner graph-operation --from ${args.fromPath} --apply`
+  });
+
+  await args.changeLogWriter.append(event);
+  await args.graphRepository.save(applyResult.candidateGraph);
+
+  return {
+    status: "applied",
+    dryRun: false,
+    applied: true,
+    sourcePath: args.fromPath,
+    operation: proposal.operation.kind,
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: applyResult.candidateGraph.graphVersion,
+    approvalRequired: applyResult.approval.required,
+    approvalCategory: applyResult.approval.category,
+    approvalRationale: applyResult.approval.rationale,
+    approvalStatus,
+    affectedNodeIds,
+    operationErrors: [],
+    validation,
+    graph: serializePlanningGraphJson(applyResult.candidateGraph),
+    event,
+    message: "Applied Graph Operation to planning/graph.json and recorded planning/change-log.ndjson."
   };
 }
 
@@ -1407,6 +1565,14 @@ function parseJsonObjectProperty(value: unknown, path: string): Record<string, u
   return value as Record<string, unknown>;
 }
 
+function parseGraphOperationProposal(value: unknown): ParsedGraphOperationProposal {
+  const rawProposal = parseJsonObjectProperty(value, "Proposed Graph Operation");
+  return {
+    operation: parseProposedGraphOperationJson(rawProposal),
+    approved: rawProposal.approved === true
+  };
+}
+
 function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation {
   const operation = parseJsonObjectProperty(value, "Proposed Graph Operation");
   const operationName = readString(operation.operation ?? operation.kind, "operation");
@@ -1559,6 +1725,38 @@ function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation
   }
 
   throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
+}
+
+function affectedNodeIdsForGraphOperation(operation: ProposedGraphOperation): readonly string[] {
+  if (operation.kind === "AddOpenQuestion") {
+    return [operation.openQuestion.id];
+  }
+
+  if (operation.kind === "AddRequirement") {
+    return [operation.requirement.id];
+  }
+
+  if (operation.kind === "AddDecision") {
+    return [operation.decision.id];
+  }
+
+  if (operation.kind === "AddWorkItem") {
+    return uniqueStrings([operation.workItem.id, ...operation.edges.flatMap((edge) => [edge.source, edge.target])]);
+  }
+
+  if (operation.kind === "AddDependencyEdge") {
+    return uniqueStrings([operation.edge.source, operation.edge.target]);
+  }
+
+  if (operation.kind === "AddHitlGate") {
+    return uniqueStrings([operation.hitlGate.id, ...operation.hitlGate.blocks, ...operation.edges.flatMap((edge) => [edge.source, edge.target])]);
+  }
+
+  return [];
+}
+
+function uniqueStrings(values: readonly string[]): readonly string[] {
+  return [...new Set(values)];
 }
 
 function readOptionalProvenance(

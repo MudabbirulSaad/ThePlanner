@@ -1582,9 +1582,255 @@ describe("planner CLI use case wiring", () => {
       affected_node_ids: ["wi-001"]
     });
   });
+
+  it("dry-runs Graph Operation proposals without writing planning files", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-op-dry-run-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("proposal.json", `${JSON.stringify(addOpenQuestionProposal(), null, 2)}\n`, "utf8");
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--dry-run", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        graphOperationProposalReader: new FileGraphOperationProposalReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "candidate",
+        dryRun: true,
+        applied: false,
+        operation: "AddOpenQuestion",
+        graphVersionBefore: 1,
+        graphVersionAfter: 2,
+        affectedNodeIds: ["oq-001"],
+        validation: { status: "pass" }
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("applies valid Graph Operation proposals and appends a change-log event", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-op-apply-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("proposal.json", `${JSON.stringify(addOpenQuestionProposal(), null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        graphOperationProposalReader: new FileGraphOperationProposalReader(),
+        changeLogWriter: new FileChangeLogWriter(),
+        currentTimestamp: () => "2026-05-31T01:02:03.000Z"
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "applied",
+        dryRun: false,
+        applied: true,
+        operation: "AddOpenQuestion",
+        approvalStatus: "not_required",
+        affectedNodeIds: ["oq-001"],
+        event: {
+          event_id: "evt-20260531010203-2",
+          graph_version_before: 1,
+          graph_version_after: 2,
+          operation_type: "AddOpenQuestion",
+          affected_node_ids: ["oq-001"],
+          approval_status: "not_required",
+          provenance_reference: "theplanner graph-operation --from proposal.json --apply"
+        }
+      });
+      expect(JSON.parse(await readFile("planning/graph.json", "utf8"))).toMatchObject({
+        graph_version: 2,
+        nodes: { open_questions: [{ id: "oq-001" }] }
+      });
+      expect(JSON.parse((await readFile("planning/change-log.ndjson", "utf8")).trim())).toMatchObject({
+        operation_type: "AddOpenQuestion",
+        affected_node_ids: ["oq-001"]
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects invalid Graph Operation apply without mutating files", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-op-invalid-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile(
+        "proposal.json",
+        `${JSON.stringify({ ...addOpenQuestionProposal(), open_question: { ...addOpenQuestionProposal().open_question, id: "wi-001" } }, null, 2)}\n`,
+        "utf8"
+      );
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        graphOperationProposalReader: new FileGraphOperationProposalReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "rejected",
+        applied: false,
+        operationErrors: expect.arrayContaining([
+          expect.objectContaining({ code: "open_question_id_invalid", nodeId: "wi-001" })
+        ])
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("refuses approval-required Graph Operation apply without explicit approval", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-op-approval-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("proposal.json", `${JSON.stringify(acceptedDecisionProposal(), null, 2)}\n`, "utf8");
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        graphOperationProposalReader: new FileGraphOperationProposalReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "rejected",
+        applied: false,
+        approvalRequired: true,
+        approvalStatus: "missing",
+        operationErrors: [{ code: "graph_operation_approval_required" }]
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("applies approval-required Graph Operation proposals with a strict approval flag", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-graph-op-approved-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("proposal.json", `${JSON.stringify(acceptedDecisionProposal(), null, 2)}\n`, "utf8");
+
+      const result = await runPlannerCli(["graph-operation", "--from", "proposal.json", "--apply", "--approved", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        graphOperationProposalReader: new FileGraphOperationProposalReader(),
+        changeLogWriter: new FileChangeLogWriter(),
+        currentTimestamp: () => "2026-05-31T04:05:06.000Z"
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "applied",
+        applied: true,
+        approvalRequired: true,
+        approvalStatus: "approved",
+        affectedNodeIds: ["dec-001"],
+        event: {
+          graph_version_before: 1,
+          graph_version_after: 2,
+          operation_type: "AddDecision",
+          affected_node_ids: ["dec-001"],
+          approval_status: "approved"
+        }
+      });
+      expect(JSON.parse(await readFile("planning/graph.json", "utf8"))).toMatchObject({
+        graph_version: 2,
+        nodes: { decisions: [{ id: "dec-001", status: "accepted" }] }
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
 });
 
 async function listWorkspaceFiles(path: string): Promise<readonly string[]> {
   const entries = await readdir(path, { recursive: true, withFileTypes: true });
   return entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name)).sort();
+}
+
+function addOpenQuestionProposal() {
+  return {
+    operation: "add_open_question",
+    open_question: {
+      id: "oq-001",
+      title: "Deployment target",
+      question: "Which deployment target should the first release support?",
+      priority: "high",
+      blocks_execution: true,
+      provenance: {
+        source_type: "planner_inference",
+        source_reference: "proposal.json",
+        created_by: "test proposer",
+        confidence: "medium"
+      }
+    }
+  };
+}
+
+function acceptedDecisionProposal() {
+  return {
+    operation: "add_decision",
+    approval_classification: {
+      category: "commitment_changing",
+      rationale: "Accepted decisions change planning commitments."
+    },
+    decision: {
+      id: "dec-001",
+      title: "Use markdown projections",
+      status: "accepted",
+      selected_option: "Use Markdown files as projections over the Planning Graph.",
+      rationale: "Projection files are reviewable while the graph remains canonical.",
+      rejected_alternatives: ["Provider-written graph files"],
+      unresolved_questions: [],
+      provenance: {
+        source_type: "user_answer",
+        source_reference: "proposal.json",
+        created_by: "test proposer",
+        confidence: "high"
+      }
+    }
+  };
 }

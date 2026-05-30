@@ -6,6 +6,7 @@ export interface PlannerCliResult {
 
 import {
   exportProjectionsUseCase,
+  graphOperationApplyUseCase,
   graphOperationDryRunUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
@@ -239,16 +240,18 @@ export async function runPlannerCli(
   }
 
   if (command === "graph-operation") {
-    if (rest.includes("--apply")) {
-      return fail("theplanner graph-operation --apply is deferred; use --dry-run to validate a candidate", json);
-    }
-
-    if (!rest.includes("--dry-run")) {
-      return fail("theplanner graph-operation requires --dry-run", json);
+    const dryRun = rest.includes("--dry-run");
+    const apply = rest.includes("--apply");
+    if (dryRun === apply) {
+      return fail("theplanner graph-operation requires exactly one of --dry-run or --apply", json);
     }
 
     if (!services.graphOperationProposalReader) {
       return fail("theplanner graph-operation requires a graph operation proposal reader", json);
+    }
+
+    if (apply && !services.changeLogWriter) {
+      return fail("theplanner graph-operation --apply requires a planning change log writer", json);
     }
 
     const from = readOption(rest, "--from");
@@ -257,11 +260,20 @@ export async function runPlannerCli(
     }
 
     try {
-      const result = await graphOperationDryRunUseCase({
-        graphRepository: services.graphRepository,
-        proposalReader: services.graphOperationProposalReader,
-        fromPath: from
-      });
+      const result = apply
+        ? await graphOperationApplyUseCase({
+            graphRepository: services.graphRepository,
+            proposalReader: services.graphOperationProposalReader,
+            changeLogWriter: requireChangeLogWriter(services.changeLogWriter),
+            fromPath: from,
+            approved: rest.includes("--approved"),
+            timestamp: services.currentTimestamp?.()
+          })
+        : await graphOperationDryRunUseCase({
+            graphRepository: services.graphRepository,
+            proposalReader: services.graphOperationProposalReader,
+            fromPath: from
+          });
       return render(result.status === "rejected" ? 1 : 0, result, json);
     } catch (error) {
       return renderError(error, json);
