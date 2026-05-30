@@ -1,0 +1,12 @@
+{
+  "operation": "update_work_item_execution_state",
+  "work_item_id": "wi-101",
+  "execution_state": "done",
+  "rationale": "Reviewer validation passed for the completed agent run.",
+  "provenance": {
+    "source_type": "planner_inference",
+    "source_reference": "planning/runs/run-20260530-120000-wi-101/result.json",
+    "created_by": "theplanner run-reviewer",
+    "confidence": "high"
+  }
+}

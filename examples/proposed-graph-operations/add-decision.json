@@ -1,0 +1,22 @@
+{
+  "operation": "add_decision",
+  "decision": {
+    "id": "dec-101",
+    "title": "Use Markdown projections",
+    "status": "accepted",
+    "selected_option": "Use Markdown files as projections over the Planning Graph.",
+    "rationale": "Markdown projections are reviewable while planning/graph.json remains canonical.",
+    "rejected_alternatives": ["Allow providers to edit planning/graph.json directly"],
+    "unresolved_questions": [],
+    "provenance": {
+      "source_type": "user_answer",
+      "source_reference": "planning/intake/refined-brief.md#decisions",
+      "created_by": "theplanner propose",
+      "confidence": "high"
+    }
+  },
+  "approval_classification": {
+    "category": "commitment_changing",
+    "rationale": "Accepted decisions change planning commitments and require explicit approval before apply."
+  }
+}

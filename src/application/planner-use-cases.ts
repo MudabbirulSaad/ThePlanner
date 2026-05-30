@@ -12,21 +12,12 @@ import {
 } from "../core/index.js";
 import type {
   GraphValidationResult,
-  DecisionNode,
-  DependencyEdge,
-  ExecutionState,
-  GraphOperationApprovalCategory,
-  HitlGateNode,
   IntakeQuestionSet,
-  OpenQuestionNode,
   PlanningGraph,
   ProjectionInput,
   ProposedGraphOperation,
-  Provenance,
   ReconciliationResult,
-  RequirementNode,
   RenderedProjection,
-  ValidationMethod,
   WorkItemNode
 } from "../core/index.js";
 import { graphSchemaTemplate } from "../templates/graph-schema-template.js";
@@ -39,6 +30,10 @@ import {
   validationCommandsForWorkItem
 } from "./agent-context-bundle.js";
 import type { AgentContextBundleSection, ContextFileReader, ExecutionSliceContextSelection, SupportedAgent } from "./agent-context-bundle.js";
+import {
+  parseProposedGraphOperationJson,
+  parseProposedGraphOperationProposalJson
+} from "./graph-operation-schema.js";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
@@ -2094,11 +2089,7 @@ function parseJsonObjectProperty(value: unknown, path: string): Record<string, u
 }
 
 function parseGraphOperationProposal(value: unknown): ParsedGraphOperationProposal {
-  const rawProposal = parseJsonObjectProperty(value, "Proposed Graph Operation");
-  return {
-    operation: parseProposedGraphOperationJson(rawProposal),
-    approved: rawProposal.approved === true
-  };
+  return parseProposedGraphOperationProposalJson(value);
 }
 
 function parseGraphOperationUserAnswers(value: unknown, sourcePath: string): readonly GraphOperationUserAnswerInput[] {
@@ -2121,181 +2112,6 @@ function parseGraphOperationUserAnswers(value: unknown, sourcePath: string): rea
       sourceReference
     };
   });
-}
-
-function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation {
-  const operation = parseJsonObjectProperty(value, "Proposed Graph Operation");
-  const operationName = readString(operation.operation ?? operation.kind, "operation");
-
-  if (operationName === "add_open_question" || operationName === "AddOpenQuestion") {
-    const rawOpenQuestion = parseJsonObjectProperty(operation.open_question ?? operation.openQuestion, "open_question");
-    const openQuestion: OpenQuestionNode = {
-      id: readString(rawOpenQuestion.id, "open_question.id") as OpenQuestionNode["id"],
-      kind: "open_question",
-      title: readString(rawOpenQuestion.title, "open_question.title"),
-      status: "active",
-      question: readString(rawOpenQuestion.question, "open_question.question"),
-      priority: readString(rawOpenQuestion.priority, "open_question.priority") as OpenQuestionNode["priority"],
-      blocksExecution: readBoolean(rawOpenQuestion.blocks_execution ?? rawOpenQuestion.blocksExecution, "open_question.blocks_execution"),
-      ...readOptionalProvenance(rawOpenQuestion, "open_question")
-    };
-
-    return {
-      kind: "AddOpenQuestion",
-      openQuestion
-    };
-  }
-
-  if (operationName === "add_requirement" || operationName === "AddRequirement") {
-    const rawRequirement = parseJsonObjectProperty(operation.requirement, "requirement");
-    const requirement: RequirementNode = {
-      id: readString(rawRequirement.id, "requirement.id") as RequirementNode["id"],
-      kind: "requirement",
-      title: readString(rawRequirement.title, "requirement.title"),
-      status: readString(rawRequirement.status ?? "active", "requirement.status") as RequirementNode["status"],
-      requirementType: readString(rawRequirement.type ?? rawRequirement.requirementType, "requirement.type") as RequirementNode["requirementType"],
-      statement: readString(rawRequirement.statement, "requirement.statement"),
-      ...readOptionalProvenance(rawRequirement, "requirement")
-    };
-
-    return {
-      kind: "AddRequirement",
-      requirement
-    };
-  }
-
-  if (operationName === "add_decision" || operationName === "AddDecision") {
-    const rawDecision = parseJsonObjectProperty(operation.decision, "decision");
-    const decision: DecisionNode = {
-      id: readString(rawDecision.id, "decision.id") as DecisionNode["id"],
-      kind: "decision",
-      title: readString(rawDecision.title, "decision.title"),
-      status: readString(rawDecision.status ?? "proposed", "decision.status") as DecisionNode["status"],
-      selectedOption: readString(rawDecision.selected_option ?? rawDecision.selectedOption, "decision.selected_option"),
-      rationale: readString(rawDecision.rationale, "decision.rationale"),
-      rejectedAlternatives: readStringArray(
-        rawDecision.rejected_alternatives ?? rawDecision.rejectedAlternatives ?? [],
-        "decision.rejected_alternatives"
-      ),
-      unresolvedQuestions: readStringArray(
-        rawDecision.unresolved_questions ?? rawDecision.unresolvedQuestions ?? [],
-        "decision.unresolved_questions"
-      ),
-      ...readOptionalProvenance(rawDecision, "decision")
-    };
-    const rawApprovalClassification = operation.approval_classification ?? operation.approvalClassification;
-
-    return {
-      kind: "AddDecision",
-      decision,
-      ...(rawApprovalClassification
-        ? {
-            approvalClassification: readApprovalClassification(rawApprovalClassification)
-          }
-        : {})
-    };
-  }
-
-  if (operationName === "add_work_item" || operationName === "AddWorkItem") {
-    const rawWorkItem = parseJsonObjectProperty(operation.work_item ?? operation.workItem, "work_item");
-    const workItem: WorkItemNode = {
-      id: readString(rawWorkItem.id, "work_item.id") as WorkItemNode["id"],
-      kind: "work_item",
-      title: readString(rawWorkItem.title, "work_item.title"),
-      status: readString(rawWorkItem.status ?? "planned", "work_item.status") as WorkItemNode["status"],
-      executionState: readString(
-        rawWorkItem.execution_state ?? rawWorkItem.executionState ?? "backlog",
-        "work_item.execution_state"
-      ) as WorkItemNode["executionState"],
-      readinessSnapshot: {
-        graphVersion: 1 as WorkItemNode["readinessSnapshot"]["graphVersion"],
-        labels: ["agent_eligible"],
-        reasons: ["Readiness is derived during candidate graph application."]
-      },
-      contextSummary:
-        rawWorkItem.context_summary || rawWorkItem.contextSummary
-          ? readString(rawWorkItem.context_summary ?? rawWorkItem.contextSummary, "work_item.context_summary")
-          : undefined,
-      boundaryNotes: readStringArray(
-        rawWorkItem.boundary_notes ?? rawWorkItem.boundaryNotes ?? [],
-        "work_item.boundary_notes"
-      ),
-      acceptanceCriteria: readStringArray(
-        rawWorkItem.acceptance_criteria ?? rawWorkItem.acceptanceCriteria ?? [],
-        "work_item.acceptance_criteria"
-      ),
-      validationMethods: readValidationMethods(
-        rawWorkItem.validation_methods ?? rawWorkItem.validationMethods ?? [],
-        "work_item.validation_methods"
-      ),
-      safeFailureGuidance:
-        rawWorkItem.safe_failure_guidance || rawWorkItem.safeFailureGuidance
-          ? readString(rawWorkItem.safe_failure_guidance ?? rawWorkItem.safeFailureGuidance, "work_item.safe_failure_guidance")
-          : undefined,
-      ...readOptionalProvenance(rawWorkItem, "work_item")
-    };
-
-    return {
-      kind: "AddWorkItem",
-      workItem,
-      edges: readDependencyEdges(operation.edges ?? operation.traceability_edges ?? operation.traceabilityEdges ?? [], "edges")
-    };
-  }
-
-  if (operationName === "add_dependency_edge" || operationName === "AddDependencyEdge") {
-    return {
-      kind: "AddDependencyEdge",
-      edge: readDependencyEdge(operation.edge ?? operation.dependency_edge ?? operation.dependencyEdge, "edge")
-    };
-  }
-
-  if (operationName === "add_hitl_gate" || operationName === "AddHitlGate") {
-    const rawHitlGate = parseJsonObjectProperty(operation.hitl_gate ?? operation.hitlGate, "hitl_gate");
-    const hitlGate: HitlGateNode = {
-      id: readString(rawHitlGate.id, "hitl_gate.id") as HitlGateNode["id"],
-      kind: "hitl_gate",
-      title: readString(rawHitlGate.title, "hitl_gate.title"),
-      status: readString(rawHitlGate.status ?? "active", "hitl_gate.status") as HitlGateNode["status"],
-      requiredAction: readString(rawHitlGate.required_action ?? rawHitlGate.requiredAction, "hitl_gate.required_action"),
-      blocks: readStringArray(rawHitlGate.blocks ?? [], "hitl_gate.blocks") as HitlGateNode["blocks"],
-      resolvedAt:
-        rawHitlGate.resolved_at || rawHitlGate.resolvedAt
-          ? readString(rawHitlGate.resolved_at ?? rawHitlGate.resolvedAt, "hitl_gate.resolved_at")
-          : undefined,
-      resolution:
-        rawHitlGate.resolution !== undefined ? readString(rawHitlGate.resolution, "hitl_gate.resolution") : undefined,
-      ...readOptionalProvenance(rawHitlGate, "hitl_gate")
-    };
-
-    return {
-      kind: "AddHitlGate",
-      hitlGate,
-      edges: readDependencyEdges(operation.edges ?? operation.cause_links ?? operation.causeLinks ?? [], "edges")
-    };
-  }
-
-  if (
-    operationName === "update_work_item_execution_state" ||
-    operationName === "UpdateWorkItemExecutionState"
-  ) {
-    const workItemId = readString(
-      operation.work_item_id ?? operation.workItemId,
-      "work_item_id"
-    ) as WorkItemNode["id"];
-
-    return {
-      kind: "UpdateWorkItemExecutionState",
-      workItemId,
-      executionState: readString(
-        operation.execution_state ?? operation.executionState,
-        "execution_state"
-      ) as ExecutionState,
-      rationale: readString(operation.rationale, "rationale"),
-      provenance: readProvenance(operation.provenance, "provenance")
-    };
-  }
-
-  throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
 }
 
 function affectedNodeIdsForGraphOperation(operation: ProposedGraphOperation): readonly string[] {
@@ -2332,70 +2148,6 @@ function affectedNodeIdsForGraphOperation(operation: ProposedGraphOperation): re
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
-}
-
-function readOptionalProvenance(
-  rawNode: Record<string, unknown>,
-  path: string
-): { readonly provenance?: Provenance } {
-  if (!rawNode.provenance) {
-    return {};
-  }
-
-  return {
-    provenance: readProvenance(rawNode.provenance, `${path}.provenance`)
-  };
-}
-
-function readProvenance(value: unknown, path: string): Provenance {
-  const rawProvenance = parseJsonObjectProperty(value, path);
-  return {
-    sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, `${path}.source_type`) as Provenance["sourceType"],
-    sourceReference: readString(rawProvenance.source_reference ?? rawProvenance.sourceReference, `${path}.source_reference`),
-    createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, `${path}.created_by`),
-    confidence: readString(rawProvenance.confidence, `${path}.confidence`) as Provenance["confidence"]
-  };
-}
-
-function readApprovalClassification(value: unknown): {
-  readonly category: GraphOperationApprovalCategory;
-  readonly rationale: string;
-} {
-  const rawApprovalClassification = parseJsonObjectProperty(value, "approval_classification");
-  return {
-    category: readString(
-      rawApprovalClassification.category,
-      "approval_classification.category"
-    ) as GraphOperationApprovalCategory,
-    rationale: readString(rawApprovalClassification.rationale, "approval_classification.rationale")
-  };
-}
-
-function readDependencyEdges(value: unknown, path: string): readonly DependencyEdge[] {
-  return readArray(value, path).map((edge, index) => readDependencyEdge(edge, `${path}[${index}]`));
-}
-
-function readDependencyEdge(value: unknown, path: string): DependencyEdge {
-  const rawEdge = parseJsonObjectProperty(value, path);
-  return {
-    source: readString(rawEdge.source, `${path}.source`) as DependencyEdge["source"],
-    target: readString(rawEdge.target, `${path}.target`) as DependencyEdge["target"],
-    type: readString(rawEdge.type, `${path}.type`) as DependencyEdge["type"],
-    rationale: readString(rawEdge.rationale, `${path}.rationale`)
-  };
-}
-
-function readValidationMethods(value: unknown, path: string): readonly ValidationMethod[] {
-  return readArray(value, path).map((method, index) => {
-    const rawMethod = parseJsonObjectProperty(method, `${path}[${index}]`);
-    return {
-      type: readString(rawMethod.type, `${path}[${index}].type`) as ValidationMethod["type"],
-      ...(rawMethod.command === undefined
-        ? {}
-        : { command: readString(rawMethod.command, `${path}[${index}].command`) }),
-      expectedResult: readString(rawMethod.expected_result ?? rawMethod.expectedResult, `${path}[${index}].expected_result`)
-    };
-  });
 }
 
 function readValidationSummary(value: unknown): AgentRunValidationSummary {

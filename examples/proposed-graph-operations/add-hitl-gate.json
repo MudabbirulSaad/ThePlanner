@@ -1,0 +1,24 @@
+{
+  "operation": "add_hitl_gate",
+  "hitl_gate": {
+    "id": "hitl-101",
+    "title": "Approve release scope",
+    "status": "active",
+    "required_action": "Product owner must confirm whether schema examples are part of release scope.",
+    "blocks": ["wi-101"],
+    "provenance": {
+      "source_type": "planner_inference",
+      "source_reference": "planning/intake/refined-brief.md#open-questions",
+      "created_by": "theplanner propose",
+      "confidence": "medium"
+    }
+  },
+  "edges": [
+    {
+      "source": "hitl-101",
+      "target": "oq-101",
+      "type": "references",
+      "rationale": "The Open Question is the uncertainty that caused the HITL Gate."
+    }
+  ]
+}

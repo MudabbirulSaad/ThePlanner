@@ -1,0 +1,17 @@
+{
+  "operation": "add_work_item",
+  "work_item": {
+    "id": "wi-101",
+    "title": "Malformed Work Item",
+    "execution_state": "backlog",
+    "acceptance_criteria": ["Schema validation catches malformed validation methods."],
+    "validation_methods": [
+      {
+        "type": "shell",
+        "command": "npm test",
+        "expected_result": "Tests pass."
+      }
+    ]
+  },
+  "edges": []
+}

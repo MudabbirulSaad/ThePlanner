@@ -39,6 +39,7 @@ Architecture references:
 
 - [ADR 0004: Graph Operation Pipeline for LLM Adapters](docs/adr/0004-graph-operation-pipeline-for-llm-adapters.md)
 - [RFC: Graph Operation LLM Pipeline](docs/rfc/graph-operation-llm-pipeline.md)
+- [Proposed Graph Operation Contract](docs/proposed-graph-operation-contract.md)
 
 Core rule:
 

@@ -1,0 +1,9 @@
+{
+  "operation": "add_dependency_edge",
+  "edge": {
+    "source": "wi-102",
+    "target": "wi-101",
+    "type": "depends_on",
+    "rationale": "The follow-up Work Item depends on the schema documentation Work Item."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "open_question": {
+    "id": "oq-101",
+    "title": "Missing discriminator",
+    "question": "Which operation should this be?",
+    "priority": "high",
+    "blocks_execution": true
+  }
+}

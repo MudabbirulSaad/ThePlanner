@@ -1,0 +1,16 @@
+{
+  "operation": "add_requirement",
+  "requirement": {
+    "id": "req-101",
+    "title": "Export deterministic PRD",
+    "status": "active",
+    "type": "functional",
+    "statement": "The planner must export a deterministic PRD projection from the canonical Planning Graph.",
+    "provenance": {
+      "source_type": "user_answer",
+      "source_reference": "planning/intake/refined-brief.md#requirements",
+      "created_by": "theplanner propose",
+      "confidence": "high"
+    }
+  }
+}

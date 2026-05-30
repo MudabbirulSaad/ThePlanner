@@ -1,0 +1,16 @@
+{
+  "operation": "add_open_question",
+  "open_question": {
+    "id": "oq-101",
+    "title": "Deployment target",
+    "question": "Which deployment target should the first release support?",
+    "priority": "high",
+    "blocks_execution": true,
+    "provenance": {
+      "source_type": "planner_inference",
+      "source_reference": "planning/intake/refined-brief.md#open-questions",
+      "created_by": "theplanner propose",
+      "confidence": "medium"
+    }
+  }
+}

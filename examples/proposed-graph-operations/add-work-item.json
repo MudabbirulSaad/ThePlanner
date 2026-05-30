@@ -1,0 +1,34 @@
+{
+  "operation": "add_work_item",
+  "work_item": {
+    "id": "wi-101",
+    "title": "Add operation schema documentation",
+    "status": "planned",
+    "execution_state": "backlog",
+    "context_summary": "Document and test the Proposed Graph Operation proposal contract.",
+    "boundary_notes": ["Do not replace planning/graph.schema.json."],
+    "acceptance_criteria": ["Examples validate against the proposal parser."],
+    "validation_methods": [
+      {
+        "type": "test",
+        "command": "npm test -- tests/application/graph-operation-schema.test.ts",
+        "expected_result": "Proposal schema tests pass."
+      }
+    ],
+    "safe_failure_guidance": "Reject malformed proposals before candidate graph application.",
+    "provenance": {
+      "source_type": "planner_inference",
+      "source_reference": "issues/041-add-graph-operation-schema-and-docs.md",
+      "created_by": "theplanner propose",
+      "confidence": "medium"
+    }
+  },
+  "edges": [
+    {
+      "source": "wi-101",
+      "target": "req-101",
+      "type": "satisfies",
+      "rationale": "The Work Item satisfies the proposal contract requirement."
+    }
+  ]
+}
