@@ -9,7 +9,8 @@ import type {
   AddWorkItemGraphOperation,
   AddOpenQuestionGraphOperation,
   AddRequirementGraphOperation,
-  PlanningGraph
+  PlanningGraph,
+  UpdateWorkItemExecutionStateGraphOperation
 } from "../../src/core/index.js";
 
 function baseGraph(): PlanningGraph {
@@ -329,6 +330,21 @@ function addHitlGateOperation(): AddHitlGateGraphOperation {
         rationale: "Release approval is the uncertainty causing the HITL gate."
       }
     ]
+  };
+}
+
+function updateWorkItemExecutionStateOperation(): UpdateWorkItemExecutionStateGraphOperation {
+  return {
+    kind: "UpdateWorkItemExecutionState",
+    workItemId: "wi-002" as UpdateWorkItemExecutionStateGraphOperation["workItemId"],
+    executionState: "done",
+    rationale: "Reviewer validation passed for the agent run.",
+    provenance: {
+      sourceType: "planner_inference",
+      sourceReference: "planning/runs/run-20260529-123456-wi-002/result.json",
+      createdBy: "test reviewer proposer",
+      confidence: "high"
+    }
   };
 }
 
@@ -778,5 +794,45 @@ describe("graph operations", () => {
       "dependency_edge_target_missing",
       "hitl_gate_missing_cause_link"
     ]);
+  });
+
+  it("applies UpdateWorkItemExecutionState to a deep-cloned candidate graph", () => {
+    const graph = graphWithReadyWorkItemsAndQuestion();
+    const originalWorkItem = graph.nodes.find((node) => String(node.id) === "wi-002");
+    const operation = updateWorkItemExecutionStateOperation();
+
+    const result = applyGraphOperationToCandidate(graph, operation);
+
+    expect(result.status).toBe("applied");
+    if (result.status !== "applied") {
+      throw new Error("expected operation to apply");
+    }
+    const candidateWorkItem = result.candidateGraph.nodes.find((node) => String(node.id) === "wi-002");
+    expect(result.approval).toMatchObject({ required: true, category: "readiness_changing" });
+    expect(result.candidateGraph.graphVersion).toBe(2);
+    expect(candidateWorkItem).toMatchObject({
+      id: "wi-002",
+      executionState: "done",
+      readinessSnapshot: {
+        graphVersion: 2
+      }
+    });
+    expect(graph.graphVersion).toBe(1);
+    expect(graph.nodes.find((node) => String(node.id) === "wi-002")).toBe(originalWorkItem);
+    expect(originalWorkItem).toMatchObject({ executionState: "backlog" });
+    expect(candidateWorkItem).not.toBe(originalWorkItem);
+  });
+
+  it("rejects UpdateWorkItemExecutionState when the target Work Item is missing", () => {
+    const result = applyGraphOperationToCandidate(graphWithReadyWorkItemsAndQuestion(), {
+      ...updateWorkItemExecutionStateOperation(),
+      workItemId: "wi-999" as UpdateWorkItemExecutionStateGraphOperation["workItemId"]
+    });
+
+    expect(result.status).toBe("rejected");
+    if (result.status !== "rejected") {
+      throw new Error("expected operation to be rejected");
+    }
+    expect(result.errors.map((error) => error.code)).toEqual(["work_item_not_found"]);
   });
 });

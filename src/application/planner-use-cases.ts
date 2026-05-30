@@ -14,6 +14,7 @@ import type {
   GraphValidationResult,
   DecisionNode,
   DependencyEdge,
+  ExecutionState,
   GraphOperationApprovalCategory,
   HitlGateNode,
   IntakeQuestionSet,
@@ -34,9 +35,10 @@ import {
   buildAgentContextSections,
   renderAgentContextBundle,
   renderAgentContextMarkdown,
+  selectExecutionSliceContext,
   validationCommandsForWorkItem
 } from "./agent-context-bundle.js";
-import type { AgentContextBundleSection, ContextFileReader, SupportedAgent } from "./agent-context-bundle.js";
+import type { AgentContextBundleSection, ContextFileReader, ExecutionSliceContextSelection, SupportedAgent } from "./agent-context-bundle.js";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "./graph-json.js";
 
 export interface GraphRepository {
@@ -167,6 +169,28 @@ export interface GraphOperationProposerResult {
 
 export interface GraphOperationProposer {
   readonly propose: (input: GraphOperationProposerInput) => Promise<GraphOperationProposerResult> | GraphOperationProposerResult;
+}
+
+export interface ReviewerGraphOperationProposerInput {
+  readonly graphContext: ExecutionSliceContextSelection;
+  readonly run: {
+    readonly runId: string;
+    readonly runDirectory: string;
+    readonly workItemId: string;
+    readonly agent: RunnableAgent;
+    readonly graphVersion: number;
+    readonly generatedAt: string;
+    readonly validation: AgentRunValidationSummary;
+    readonly runner: AgentExecutionResult["runner"];
+    readonly changedFiles: readonly string[];
+    readonly artifacts: readonly string[];
+  };
+}
+
+export interface ReviewerGraphOperationProposer {
+  readonly propose: (
+    input: ReviewerGraphOperationProposerInput
+  ) => Promise<GraphOperationProposerResult> | GraphOperationProposerResult;
 }
 
 export interface GraphOperationProposalSummary {
@@ -413,6 +437,27 @@ export interface AgentRunReviewResult {
   };
   readonly validation: AgentRunValidationSummary;
   readonly artifacts: readonly string[];
+  readonly message: string;
+}
+
+export interface AgentRunReviewerProposalResult {
+  readonly status: "candidate" | "rejected";
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly runId: string;
+  readonly runDirectory: string;
+  readonly workItem: {
+    readonly id: string;
+    readonly title?: string;
+  };
+  readonly runStatus: "passed" | "failed";
+  readonly proposalCount: number;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly candidateGraph?: unknown;
+  readonly validation: GraphValidationResult;
   readonly message: string;
 }
 
@@ -1056,6 +1101,67 @@ function rejectedGraphOperationParseResult(args: {
   };
 }
 
+function rejectedReviewerPolicyResult(args: {
+  readonly graph: PlanningGraph;
+  readonly sourcePath: string;
+  readonly operation: ProposedGraphOperation;
+  readonly message: string;
+}): GraphOperationDryRunResult {
+  return {
+    status: "rejected",
+    dryRun: true,
+    applied: false,
+    sourcePath: args.sourcePath,
+    operation: args.operation.kind,
+    graphVersionBefore: args.graph.graphVersion,
+    graphVersionAfter: args.graph.graphVersion,
+    approvalRequired: false,
+    approvalCategory: "none",
+    approvalRationale: "Operation was rejected by reviewer proposal policy.",
+    affectedNodeIds: affectedNodeIdsForGraphOperation(args.operation),
+    operationErrors: [
+      {
+        code: "reviewer_failure_requires_blocker",
+        message: args.message
+      }
+    ],
+    validation: validatePlanningGraph(args.graph),
+    message: "Reviewer Graph Operation was rejected before candidate validation. No planning files were written."
+  };
+}
+
+function rejectedAgentRunReviewerProposalResult(args: {
+  readonly graph: PlanningGraph;
+  readonly candidateGraph: PlanningGraph;
+  readonly summary: LoadedAgentRunSummary;
+  readonly workItem: WorkItemNode;
+  readonly runStatus: "passed" | "failed";
+  readonly proposalCount: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly message: string;
+}): AgentRunReviewerProposalResult {
+  return {
+    status: "rejected",
+    dryRun: true,
+    applied: false,
+    runId: args.summary.metadata.runId,
+    runDirectory: args.summary.runDirectory,
+    workItem: {
+      id: args.workItem.id,
+      title: args.workItem.title
+    },
+    runStatus: args.runStatus,
+    proposalCount: args.proposalCount,
+    graphVersionBefore: args.graph.graphVersion,
+    graphVersionAfter: args.candidateGraph.graphVersion,
+    proposedOperations: args.proposedOperations,
+    results: args.results,
+    validation: validatePlanningGraph(args.candidateGraph),
+    message: args.message
+  };
+}
+
 function summarizeProposedOperation(
   sourcePath: string,
   operation: ProposedGraphOperation,
@@ -1673,6 +1779,137 @@ export async function reviewAgentRunUseCase(args: {
   };
 }
 
+export async function proposeAgentRunReviewGraphOperationsUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly runArtifactReader: AgentRunArtifactReader;
+  readonly proposer: ReviewerGraphOperationProposer;
+  readonly runId: string;
+}): Promise<AgentRunReviewerProposalResult> {
+  const summary = await loadAgentRunSummary(args.runArtifactReader, args.runId);
+  const graph = await args.graphRepository.load();
+  const workItem = graph.nodes.find(
+    (node): node is WorkItemNode => node.kind === "work_item" && node.id === summary.metadata.workItemId
+  );
+  if (!workItem) {
+    throw new Error(`Work Item not found for run ${summary.metadata.runId}: ${summary.metadata.workItemId}`);
+  }
+
+  const runStatus = isPassingAgentRunSummary(summary) ? "passed" : "failed";
+  const graphContext = selectExecutionSliceContext(graph, workItem);
+  const proposerResult = await args.proposer.propose({
+    graphContext: deepCloneApplicationValue(graphContext),
+    run: {
+      runId: summary.metadata.runId,
+      runDirectory: summary.runDirectory,
+      workItemId: summary.metadata.workItemId,
+      agent: summary.metadata.agent,
+      graphVersion: summary.metadata.graphVersion,
+      generatedAt: summary.metadata.generatedAt,
+      validation: deepCloneApplicationValue(summary.metadata.validation),
+      runner: deepCloneApplicationValue(summary.runner),
+      changedFiles: deepCloneApplicationValue(summary.changedFiles),
+      artifacts: deepCloneApplicationValue(summary.artifacts)
+    }
+  });
+
+  const results: GraphOperationDryRunResult[] = [];
+  const proposedOperations: GraphOperationProposalSummary[] = [];
+  let candidateGraph = deepCloneApplicationValue(graph);
+
+  for (const [index, proposal] of proposerResult.proposals.entries()) {
+    const sourcePath = proposal.sourceReference ?? `${summary.runDirectory}/result.json#reviewer-proposal-${index + 1}`;
+    let parsedOperation: ProposedGraphOperation;
+    try {
+      parsedOperation = parseProposedGraphOperationJson(proposal.operation);
+    } catch (error) {
+      const result = rejectedGraphOperationParseResult({
+        graph: candidateGraph,
+        sourcePath,
+        error
+      });
+      results.push(result);
+      return rejectedAgentRunReviewerProposalResult({
+        graph,
+        candidateGraph,
+        summary,
+        workItem,
+        runStatus,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "At least one reviewer Graph Operation proposal was rejected. No planning files were written."
+      });
+    }
+
+    if (runStatus === "failed" && !isFailureBlockerReviewerOperation(parsedOperation)) {
+      const result = rejectedReviewerPolicyResult({
+        graph: candidateGraph,
+        sourcePath,
+        operation: parsedOperation,
+        message: "Failed agent runs must surface as a proposed HITL Gate, blocking Open Question, or blocked follow-up Work Item."
+      });
+      results.push(result);
+      proposedOperations.push(summarizeProposedOperation(sourcePath, parsedOperation, result));
+      return rejectedAgentRunReviewerProposalResult({
+        graph,
+        candidateGraph,
+        summary,
+        workItem,
+        runStatus,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "Reviewer proposal did not surface the failed run as a blocker/HITL path. No planning files were written."
+      });
+    }
+
+    const result = dryRunGraphOperationCandidate({
+      graph: candidateGraph,
+      operation: parsedOperation,
+      sourcePath
+    });
+    results.push(result);
+    proposedOperations.push(summarizeProposedOperation(sourcePath, parsedOperation, result));
+
+    if (result.status === "rejected") {
+      return rejectedAgentRunReviewerProposalResult({
+        graph,
+        candidateGraph,
+        summary,
+        workItem,
+        runStatus,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "At least one reviewer Graph Operation proposal was rejected. No planning files were written."
+      });
+    }
+
+    candidateGraph = parsePlanningGraphJson(result.candidateGraph);
+  }
+
+  return {
+    status: "candidate",
+    dryRun: true,
+    applied: false,
+    runId: summary.metadata.runId,
+    runDirectory: summary.runDirectory,
+    workItem: {
+      id: workItem.id,
+      title: workItem.title
+    },
+    runStatus,
+    proposalCount: proposerResult.proposals.length,
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: candidateGraph.graphVersion,
+    proposedOperations,
+    results,
+    candidateGraph: serializePlanningGraphJson(candidateGraph),
+    validation: validatePlanningGraph(candidateGraph),
+    message: "Dry run only. Reviewer proposals were applied to a validated candidate graph; no planning files were written."
+  };
+}
+
 export async function decideAgentRunUseCase(args: {
   readonly graphRepository: GraphRepository;
   readonly runArtifactReader: AgentRunArtifactReader;
@@ -1774,6 +2011,22 @@ async function loadAgentRunSummary(
     changedFiles: result.changedFiles,
     artifacts: result.artifactPaths
   };
+}
+
+function isPassingAgentRunSummary(summary: LoadedAgentRunSummary): boolean {
+  return summary.runner.exitCode === 0 && !summary.runner.error && summary.metadata.validation.status === "pass";
+}
+
+function isFailureBlockerReviewerOperation(operation: ProposedGraphOperation): boolean {
+  if (operation.kind === "AddHitlGate") {
+    return operation.hitlGate.status !== "resolved" && operation.hitlGate.blocks.length > 0;
+  }
+
+  if (operation.kind === "AddOpenQuestion") {
+    return operation.openQuestion.blocksExecution;
+  }
+
+  return operation.kind === "AddWorkItem";
 }
 
 async function readRunArtifact(runArtifactReader: AgentRunArtifactReader, path: string, runId: string): Promise<string> {
@@ -2021,6 +2274,27 @@ function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation
     };
   }
 
+  if (
+    operationName === "update_work_item_execution_state" ||
+    operationName === "UpdateWorkItemExecutionState"
+  ) {
+    const workItemId = readString(
+      operation.work_item_id ?? operation.workItemId,
+      "work_item_id"
+    ) as WorkItemNode["id"];
+
+    return {
+      kind: "UpdateWorkItemExecutionState",
+      workItemId,
+      executionState: readString(
+        operation.execution_state ?? operation.executionState,
+        "execution_state"
+      ) as ExecutionState,
+      rationale: readString(operation.rationale, "rationale"),
+      provenance: readProvenance(operation.provenance, "provenance")
+    };
+  }
+
   throw new Error(`Unsupported Proposed Graph Operation: ${operationName}`);
 }
 
@@ -2049,6 +2323,10 @@ function affectedNodeIdsForGraphOperation(operation: ProposedGraphOperation): re
     return uniqueStrings([operation.hitlGate.id, ...operation.hitlGate.blocks, ...operation.edges.flatMap((edge) => [edge.source, edge.target])]);
   }
 
+  if (operation.kind === "UpdateWorkItemExecutionState") {
+    return [operation.workItemId];
+  }
+
   return [];
 }
 
@@ -2064,17 +2342,18 @@ function readOptionalProvenance(
     return {};
   }
 
-  const rawProvenance = parseJsonObjectProperty(rawNode.provenance, `${path}.provenance`);
   return {
-    provenance: {
-      sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, `${path}.provenance.source_type`) as Provenance["sourceType"],
-      sourceReference: readString(
-        rawProvenance.source_reference ?? rawProvenance.sourceReference,
-        `${path}.provenance.source_reference`
-      ),
-      createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, `${path}.provenance.created_by`),
-      confidence: readString(rawProvenance.confidence, `${path}.provenance.confidence`) as Provenance["confidence"]
-    }
+    provenance: readProvenance(rawNode.provenance, `${path}.provenance`)
+  };
+}
+
+function readProvenance(value: unknown, path: string): Provenance {
+  const rawProvenance = parseJsonObjectProperty(value, path);
+  return {
+    sourceType: readString(rawProvenance.source_type ?? rawProvenance.sourceType, `${path}.source_type`) as Provenance["sourceType"],
+    sourceReference: readString(rawProvenance.source_reference ?? rawProvenance.sourceReference, `${path}.source_reference`),
+    createdBy: readString(rawProvenance.created_by ?? rawProvenance.createdBy, `${path}.created_by`),
+    confidence: readString(rawProvenance.confidence, `${path}.confidence`) as Provenance["confidence"]
   };
 }
 

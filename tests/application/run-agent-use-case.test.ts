@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   decideAgentRunUseCase,
   parsePlanningGraphJson,
+  proposeAgentRunReviewGraphOperationsUseCase,
   reviewAgentRunUseCase,
   runAgentUseCase
 } from "../../src/application/index.js";
@@ -13,10 +14,13 @@ import type {
   AgentRunner,
   AgentRunnerInput,
   AgentRunnerResult,
+  GraphOperationProposerResult,
   ValidationCommandResult,
   ValidationCommandRunner,
   ValidationCommandRunnerInput,
-  PlanningChangeLogEvent
+  PlanningChangeLogEvent,
+  ReviewerGraphOperationProposer,
+  ReviewerGraphOperationProposerInput
 } from "../../src/application/index.js";
 
 class FakeArtifactWriter implements AgentRunArtifactWriter {
@@ -67,6 +71,17 @@ class FakeValidationRunner implements ValidationCommandRunner {
       throw new Error(`Unexpected validation command: ${input.command}`);
     }
     return result;
+  }
+}
+
+class FakeReviewerProposer implements ReviewerGraphOperationProposer {
+  public input: ReviewerGraphOperationProposerInput | undefined;
+
+  public constructor(private readonly result: GraphOperationProposerResult) {}
+
+  public propose(input: ReviewerGraphOperationProposerInput): GraphOperationProposerResult {
+    this.input = input;
+    return this.result;
   }
 }
 
@@ -337,6 +352,209 @@ describe("run agent use case", () => {
     });
   });
 
+  it("dry-runs a passing reviewer proposal to update Work Item execution state without saving", async () => {
+    let saveCalled = false;
+    const proposer = new FakeReviewerProposer({
+      proposals: [
+        {
+          sourceReference: "planning/runs/run-20260529-123456-wi-001/result.json#reviewer",
+          operation: {
+            operation: "update_work_item_execution_state",
+            work_item_id: "wi-001",
+            execution_state: "done",
+            rationale: "Validation passed for the agent run.",
+            provenance: {
+              source_type: "planner_inference",
+              source_reference: "planning/runs/run-20260529-123456-wi-001/result.json",
+              created_by: "fake reviewer proposer",
+              confidence: "high"
+            }
+          }
+        }
+      ]
+    });
+
+    const result = await proposeAgentRunReviewGraphOperationsUseCase({
+      graphRepository: {
+        load: async () => graph,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      runArtifactReader: new FakeArtifactReader(savedRunArtifacts()),
+      proposer,
+      runId: "run-20260529-123456-wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      dryRun: true,
+      applied: false,
+      runStatus: "passed",
+      proposalCount: 1,
+      proposedOperations: [
+        {
+          operation: "UpdateWorkItemExecutionState",
+          approvalRequired: true,
+          approvalCategory: "readiness_changing",
+          affectedNodeIds: ["wi-001"]
+        }
+      ],
+      validation: { status: "pass" }
+    });
+    expect(proposer.input).toMatchObject({
+      run: {
+        runId: "run-20260529-123456-wi-001",
+        validation: { status: "pass" },
+        changedFiles: ["src/example.ts", "tests/example.test.ts"]
+      },
+      graphContext: {
+        graph: {
+          nodes: expect.arrayContaining([expect.objectContaining({ id: "wi-001", kind: "work_item" })])
+        }
+      }
+    });
+    expect(saveCalled).toBe(false);
+    expect(graph.nodes.find((node) => node.kind === "work_item" && String(node.id) === "wi-001")).toMatchObject({
+      executionState: "backlog"
+    });
+  });
+
+  it("dry-runs a failing reviewer proposal as a HITL blocker instead of retrying automatically", async () => {
+    const proposer = new FakeReviewerProposer({
+      proposals: [
+        {
+          operation: {
+            operation: "add_hitl_gate",
+            hitl_gate: {
+              id: "hitl-001",
+              title: "Review failed agent run",
+              required_action: "Inspect validation failure before retrying wi-001.",
+              blocks: ["wi-001"],
+              provenance: {
+                source_type: "planner_inference",
+                source_reference: "planning/runs/run-20260529-123456-wi-001/result.json",
+                created_by: "fake reviewer proposer",
+                confidence: "medium"
+              }
+            },
+            edges: [
+              {
+                source: "hitl-001",
+                target: "wi-001",
+                type: "references",
+                rationale: "The failed run is the cause of the human review gate."
+              }
+            ]
+          }
+        }
+      ]
+    });
+
+    const result = await proposeAgentRunReviewGraphOperationsUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(savedRunArtifacts({ validationStatus: "fail" })),
+      proposer,
+      runId: "run-20260529-123456-wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      runStatus: "failed",
+      proposedOperations: [
+        {
+          operation: "AddHitlGate",
+          affectedNodeIds: ["hitl-001", "wi-001"]
+        }
+      ],
+      validation: { status: "pass" }
+    });
+  });
+
+  it("rejects failing reviewer proposals that do not surface a blocker path", async () => {
+    const proposer = new FakeReviewerProposer({
+      proposals: [
+        {
+          operation: {
+            operation: "update_work_item_execution_state",
+            work_item_id: "wi-001",
+            execution_state: "done",
+            rationale: "Incorrectly mark failed validation done.",
+            provenance: {
+              source_type: "planner_inference",
+              source_reference: "planning/runs/run-20260529-123456-wi-001/result.json",
+              created_by: "fake reviewer proposer",
+              confidence: "low"
+            }
+          }
+        }
+      ]
+    });
+
+    const result = await proposeAgentRunReviewGraphOperationsUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(savedRunArtifacts({ validationStatus: "fail" })),
+      proposer,
+      runId: "run-20260529-123456-wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "rejected",
+      runStatus: "failed",
+      results: [
+        {
+          status: "rejected",
+          operationErrors: [{ code: "reviewer_failure_requires_blocker" }]
+        }
+      ]
+    });
+  });
+
+  it("rejects invalid reviewer proposals through Graph Operation validation without saving", async () => {
+    let saveCalled = false;
+    const proposer = new FakeReviewerProposer({
+      proposals: [
+        {
+          operation: {
+            operation: "update_work_item_execution_state",
+            work_item_id: "wi-999",
+            execution_state: "done",
+            rationale: "Unknown Work Item should be rejected.",
+            provenance: {
+              source_type: "planner_inference",
+              source_reference: "planning/runs/run-20260529-123456-wi-001/result.json",
+              created_by: "fake reviewer proposer",
+              confidence: "medium"
+            }
+          }
+        }
+      ]
+    });
+
+    const result = await proposeAgentRunReviewGraphOperationsUseCase({
+      graphRepository: {
+        load: async () => graph,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      runArtifactReader: new FakeArtifactReader(savedRunArtifacts()),
+      proposer,
+      runId: "run-20260529-123456-wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "rejected",
+      results: [
+        {
+          status: "rejected",
+          operationErrors: [{ code: "work_item_not_found" }]
+        }
+      ]
+    });
+    expect(saveCalled).toBe(false);
+  });
+
   it("appends an accepted run decision without changing Work Item state", async () => {
     let event: PlanningChangeLogEvent | undefined;
 
@@ -398,8 +616,9 @@ describe("run agent use case", () => {
   });
 });
 
-function savedRunArtifacts(): ReadonlyMap<string, string> {
+function savedRunArtifacts(options?: { readonly validationStatus?: "pass" | "fail" }): ReadonlyMap<string, string> {
   const runDirectory = "planning/runs/run-20260529-123456-wi-001";
+  const validationStatus = options?.validationStatus ?? "pass";
   const metadata = {
     runId: "run-20260529-123456-wi-001",
     workItemId: "wi-001",
@@ -407,10 +626,10 @@ function savedRunArtifacts(): ReadonlyMap<string, string> {
     agent: "codex",
     generatedAt: "2026-05-29T12:34:56.000Z",
     validationCommands: ["npm test"],
-    validation: { status: "pass", commands: [{ command: "npm test", exitCode: 0 }] }
+    validation: { status: validationStatus, commands: [{ command: "npm test", exitCode: validationStatus === "pass" ? 0 : 1 }] }
   };
   const result = {
-    status: "completed",
+    status: validationStatus === "pass" ? "completed" : "failed",
     runId: "run-20260529-123456-wi-001",
     runner: { command: ["codex"], exitCode: 0 },
     validation: metadata.validation,

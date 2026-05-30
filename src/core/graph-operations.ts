@@ -1,6 +1,7 @@
 import type {
   DecisionNode,
   DependencyEdge,
+  ExecutionState,
   HitlGateNode,
   OpenQuestionNode,
   PlanningGraph,
@@ -19,7 +20,8 @@ export type ProposedGraphOperation =
   | AddDecisionGraphOperation
   | AddWorkItemGraphOperation
   | AddDependencyEdgeGraphOperation
-  | AddHitlGateGraphOperation;
+  | AddHitlGateGraphOperation
+  | UpdateWorkItemExecutionStateGraphOperation;
 
 export type GraphOperationApprovalCategory =
   | "none"
@@ -66,6 +68,14 @@ export interface AddHitlGateGraphOperation {
   readonly kind: "AddHitlGate";
   readonly hitlGate: HitlGateNode;
   readonly edges: readonly DependencyEdge[];
+}
+
+export interface UpdateWorkItemExecutionStateGraphOperation {
+  readonly kind: "UpdateWorkItemExecutionState";
+  readonly workItemId: WorkItemNode["id"];
+  readonly executionState: ExecutionState;
+  readonly rationale: string;
+  readonly provenance: Provenance;
 }
 
 export interface GraphOperationFinding {
@@ -166,6 +176,18 @@ export function applyGraphOperationToCandidate(
     };
   }
 
+  if (operationClone.kind === "UpdateWorkItemExecutionState") {
+    return {
+      status: "applied",
+      approval: {
+        required: true,
+        category: "readiness_changing",
+        rationale: "Execution-state proposals change Work Item planning state."
+      },
+      candidateGraph: updateWorkItemExecutionStateOnCandidateGraph(candidateGraph, operationClone)
+    };
+  }
+
   return {
     status: "rejected",
     errors: [
@@ -203,6 +225,10 @@ export function validateGraphOperation(
 
   if (operation.kind === "AddHitlGate") {
     return validateAddHitlGateOperation(graph, operation);
+  }
+
+  if (operation.kind === "UpdateWorkItemExecutionState") {
+    return validateUpdateWorkItemExecutionStateOperation(graph, operation);
   }
 
   return [
@@ -589,6 +615,50 @@ function validateAddHitlGateOperation(graph: PlanningGraph, operation: AddHitlGa
   return errors;
 }
 
+function validateUpdateWorkItemExecutionStateOperation(
+  graph: PlanningGraph,
+  operation: UpdateWorkItemExecutionStateGraphOperation
+): readonly GraphOperationFinding[] {
+  const errors: GraphOperationFinding[] = [];
+  const workItem = graph.nodes.find((node): node is WorkItemNode => node.kind === "work_item" && node.id === operation.workItemId);
+
+  if (!workItem) {
+    errors.push({
+      code: "work_item_not_found",
+      message: `UpdateWorkItemExecutionState requires an existing Work Item: ${operation.workItemId}`,
+      nodeId: operation.workItemId
+    });
+  }
+
+  if (!["backlog", "ready", "in_progress", "review", "done", "cancelled", "deferred"].includes(operation.executionState)) {
+    errors.push({
+      code: "work_item_execution_state_invalid",
+      message: "UpdateWorkItemExecutionState execution state is not supported.",
+      nodeId: operation.workItemId
+    });
+  }
+
+  if (workItem?.executionState === operation.executionState) {
+    errors.push({
+      code: "work_item_execution_state_unchanged",
+      message: `Work Item ${operation.workItemId} is already ${operation.executionState}.`,
+      nodeId: operation.workItemId
+    });
+  }
+
+  if (!operation.rationale.trim()) {
+    errors.push({
+      code: "work_item_execution_state_rationale_required",
+      message: "UpdateWorkItemExecutionState requires a non-empty rationale.",
+      nodeId: operation.workItemId
+    });
+  }
+
+  errors.push(...validateRequiredProvenanceForOperation(operation.provenance, operation.workItemId));
+
+  return errors;
+}
+
 function validateNodeId(
   graph: PlanningGraph,
   node: PlanningNode,
@@ -852,6 +922,45 @@ function validateRequiredProvenance(node: PlanningNode): readonly GraphOperation
   return errors;
 }
 
+function validateRequiredProvenanceForOperation(
+  provenance: Provenance | undefined,
+  nodeId: string
+): readonly GraphOperationFinding[] {
+  if (!provenance) {
+    return [
+      {
+        code: "graph_operation_provenance_required",
+        message: "Generated or inferred Work Item execution-state proposals require provenance.",
+        nodeId
+      }
+    ];
+  }
+
+  const missing = provenanceFields(provenance).filter((field) => !field.value.trim()).map((field) => field.name);
+  if (missing.length === 0 && ["low", "medium", "high"].includes(provenance.confidence)) {
+    return [];
+  }
+
+  const errors: GraphOperationFinding[] = [];
+  if (missing.length > 0) {
+    errors.push({
+      code: "graph_operation_provenance_incomplete",
+      message: `Provenance must include non-empty ${missing.join(", ")}.`,
+      nodeId
+    });
+  }
+
+  if (!["low", "medium", "high"].includes(provenance.confidence)) {
+    errors.push({
+      code: "graph_operation_provenance_confidence_invalid",
+      message: "Provenance confidence must be low, medium, or high.",
+      nodeId
+    });
+  }
+
+  return errors;
+}
+
 function addNodeToCandidateGraph(candidateGraph: PlanningGraph, node: PlanningNode): PlanningGraph {
   return {
     ...candidateGraph,
@@ -910,6 +1019,26 @@ function addHitlGateToCandidateGraph(candidateGraph: PlanningGraph, operation: A
     graphVersion: nextVersion,
     nodes: [...candidateGraph.nodes, operation.hitlGate],
     edges: appendNewEdges(candidateGraph.edges, operation.edges)
+  });
+}
+
+function updateWorkItemExecutionStateOnCandidateGraph(
+  candidateGraph: PlanningGraph,
+  operation: UpdateWorkItemExecutionStateGraphOperation
+): PlanningGraph {
+  const nextVersion = graphVersion(Number(candidateGraph.graphVersion) + 1);
+
+  return withDerivedReadiness({
+    ...candidateGraph,
+    graphVersion: nextVersion,
+    nodes: candidateGraph.nodes.map((node) =>
+      isWorkItem(node) && node.id === operation.workItemId
+        ? {
+            ...node,
+            executionState: operation.executionState
+          }
+        : node
+    )
   });
 }
 
