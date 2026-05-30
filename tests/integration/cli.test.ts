@@ -18,6 +18,7 @@ import {
   FileProjectionWriter,
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
+  FileRepoScanner,
   GitHubDryRunTrackerSyncAdapter,
   FileWorkspaceInitializer
 } from "../../src/adapters/index.js";
@@ -121,6 +122,76 @@ describe("planner CLI use case wiring", () => {
     });
 
     expectJsonError(result, "theplanner sync --apply is deferred; use --dry-run to preview tracker payloads");
+  });
+
+  it("returns deterministic repo scan context from a fixture without writing planning files", async () => {
+    const fixtureRoot = "tests/fixtures/repo-scan/sample";
+    const before = await listWorkspaceFiles(fixtureRoot);
+    const graphBefore = await readFile(join(fixtureRoot, "planning/graph.json"), "utf8");
+
+    const result = await runPlannerCli(["scan", "repo", "--dry-run", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => { throw new Error("repo scan must not write projections"); } },
+      repoScanner: new FileRepoScanner(fixtureRoot)
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: "scanned",
+      dryRun: true,
+      applied: false,
+      rootPath: fixtureRoot,
+      projectTypes: ["node", "theplanner", "typescript", "vite"],
+      commands: [
+        { name: "build", command: "tsc -p tsconfig.json", sourcePath: "package.json" },
+        { name: "lint", command: "eslint .", sourcePath: "package.json" },
+        { name: "test", command: "vitest run", sourcePath: "package.json" }
+      ],
+      relevantDocs: [
+        {
+          path: "docs/adr/0001-record-architecture.md",
+          title: "Record Architecture",
+          headings: ["Record Architecture", "Decision"]
+        },
+        {
+          path: "README.md",
+          title: "Sample Planner App",
+          headings: ["Sample Planner App", "Commands", "Architecture"]
+        }
+      ],
+      planningFiles: ["planning/graph.json", "planning/work-items/wi-001.md"],
+      components: [
+        { path: "src", kind: "source-area" },
+        { path: "src/adapters", kind: "source-area" },
+        { path: "src/core", kind: "source-area" },
+        { path: "tests", kind: "test-area" },
+        { path: "tests/core", kind: "test-area" }
+      ],
+      ignoredDirectories: [".git", ".theplanner", ".turbo", ".vite", "coverage", "dist", "node_modules", "out", "tmp"],
+      scannedFiles: [
+        "README.md",
+        "docs/adr/0001-record-architecture.md",
+        "package.json",
+        "planner.config.json",
+        "planning/graph.json",
+        "planning/work-items/wi-001.md",
+        "tsconfig.json",
+        "vite.config.ts"
+      ],
+      message: "Dry run scanned 8 repository context file(s). No planning graph or projection files were written."
+    });
+    expect(await listWorkspaceFiles(fixtureRoot)).toEqual(before);
+    expect(await readFile(join(fixtureRoot, "planning/graph.json"), "utf8")).toBe(graphBefore);
+  });
+
+  it("rejects repo scan without dry-run because apply is deferred", async () => {
+    const result = await runPlannerCli(["scan", "repo", "--json"], {
+      graphRepository: { load: async () => graph },
+      projectionWriter: { writeAll: async () => undefined },
+      repoScanner: new FileRepoScanner("tests/fixtures/repo-scan/sample")
+    });
+
+    expectJsonError(result, "theplanner scan repo requires --dry-run");
   });
 
   it("returns JSON error envelopes for argument errors", async () => {

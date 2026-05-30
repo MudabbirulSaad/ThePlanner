@@ -1,0 +1,17 @@
+{
+  "schema_version": "0.1.0",
+  "graph_version": 1,
+  "nodes": {
+    "requirements": [],
+    "work_items": [],
+    "decisions": [],
+    "assumptions": [],
+    "risks": [],
+    "open_questions": [],
+    "hitl_gates": [],
+    "components": [],
+    "document_projections": [],
+    "execution_slices": []
+  },
+  "edges": []
+}

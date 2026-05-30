@@ -214,6 +214,38 @@ export interface TrackerSyncAdapter {
   readonly preview: (input: TrackerSyncPreviewInput) => Promise<TrackerSyncPreview> | TrackerSyncPreview;
 }
 
+export interface RepoScanCommand {
+  readonly name: string;
+  readonly command: string;
+  readonly sourcePath: string;
+}
+
+export interface RepoScanDocument {
+  readonly path: string;
+  readonly title: string | null;
+  readonly headings: readonly string[];
+}
+
+export interface RepoScanComponent {
+  readonly path: string;
+  readonly kind: string;
+}
+
+export interface RepoScanContext {
+  readonly rootPath: string;
+  readonly projectTypes: readonly string[];
+  readonly commands: readonly RepoScanCommand[];
+  readonly relevantDocs: readonly RepoScanDocument[];
+  readonly planningFiles: readonly string[];
+  readonly components: readonly RepoScanComponent[];
+  readonly ignoredDirectories: readonly string[];
+  readonly scannedFiles: readonly string[];
+}
+
+export interface RepoScanner {
+  readonly scan: () => Promise<RepoScanContext>;
+}
+
 export interface TrackerSyncDryRunResult {
   readonly status: "planned";
   readonly tracker: SupportedTracker;
@@ -454,6 +486,27 @@ export async function syncTrackerDryRunUseCase(args: {
     applied: false,
     proposedIssues: preview.issues,
     message: `Dry run planned ${preview.issues.length} ${args.trackerAdapter.tracker} issue(s). No external tracker was mutated.`
+  };
+}
+
+export async function repoScanDryRunUseCase(args: {
+  readonly repoScanner: RepoScanner;
+}): Promise<
+  RepoScanContext & {
+    readonly status: "scanned";
+    readonly dryRun: true;
+    readonly applied: false;
+    readonly message: string;
+  }
+> {
+  const context = await args.repoScanner.scan();
+
+  return {
+    status: "scanned",
+    dryRun: true,
+    applied: false,
+    ...context,
+    message: `Dry run scanned ${context.scannedFiles.length} repository context file(s). No planning graph or projection files were written.`
   };
 }
 

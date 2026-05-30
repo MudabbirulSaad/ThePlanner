@@ -14,6 +14,7 @@ import {
   FileRefinedBriefWriter,
   FileWorkspaceInitializer,
   FilePlanningGraphSchemaValidator,
+  FileRepoScanner,
   GitHubDryRunTrackerSyncAdapter,
   createPlanningPathMapper,
   createLocalAgentRunner,
@@ -60,6 +61,7 @@ const result = await runPlannerCli(args, {
     outputLimitBytes: config.processOutputLimitBytes
   }),
   trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()],
+  repoScanner: new FileRepoScanner(),
   defaultAgent: config.defaultAgent,
   defaultValidationCommands: config.validationCommands
 });

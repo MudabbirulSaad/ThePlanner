@@ -1,0 +1,9 @@
+{
+  "name": "sample-planner-app",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint ."
+  }
+}

@@ -12,6 +12,7 @@ import {
   planFromBriefApplyUseCase,
   planFromBriefDryRunUseCase,
   prepareAgentContextBundleUseCase,
+  repoScanDryRunUseCase,
   refineIntakeBriefUseCase,
   reconcileGraphUseCase,
   reviewAgentRunUseCase,
@@ -32,6 +33,7 @@ import type {
   ProjectionWriter,
   RefinedBriefReader,
   RefinedBriefWriter,
+  RepoScanner,
   SupportedTracker,
   TrackerSyncAdapter,
   ValidationCommandRunner,
@@ -55,6 +57,7 @@ export interface PlannerCliServices {
   readonly agentRunner?: AgentRunner;
   readonly validationCommandRunner?: ValidationCommandRunner;
   readonly trackerSyncAdapters?: readonly TrackerSyncAdapter[];
+  readonly repoScanner?: RepoScanner;
   readonly defaultAgent?: SupportedAgent;
   readonly defaultValidationCommands?: readonly string[];
   readonly currentTimestamp?: () => string;
@@ -260,6 +263,31 @@ export async function runPlannerCli(
         graphRepository: services.graphRepository,
         trackerAdapter
       });
+      return render(0, result, json);
+    } catch (error) {
+      return renderError(error, json);
+    }
+  }
+
+  if (command === "scan") {
+    if (rest[0] !== "repo") {
+      return fail("theplanner scan requires the repo subcommand", json);
+    }
+
+    if (rest.includes("--apply")) {
+      return fail("theplanner scan repo is read-only; use --dry-run", json);
+    }
+
+    if (!rest.includes("--dry-run")) {
+      return fail("theplanner scan repo requires --dry-run", json);
+    }
+
+    if (!services.repoScanner) {
+      return fail("theplanner scan repo requires a repo scanner", json);
+    }
+
+    try {
+      const result = await repoScanDryRunUseCase({ repoScanner: services.repoScanner });
       return render(0, result, json);
     } catch (error) {
       return renderError(error, json);
