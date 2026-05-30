@@ -198,11 +198,24 @@ export interface DependencyEdge {
   readonly rationale: string;
 }
 
+export interface ProductIntent {
+  readonly summary: string;
+  readonly targetUsers: readonly string[];
+  readonly goals: readonly string[];
+  readonly mvpScope: readonly string[];
+  readonly nonGoals: readonly string[];
+  readonly constraints: readonly string[];
+  readonly successCriteria: readonly string[];
+  readonly scaffoldNotes: readonly string[];
+  readonly provenance?: Provenance;
+}
+
 export interface PlanningGraph {
   readonly schemaVersion: string;
   readonly graphVersion: GraphVersion;
   readonly generatedAt?: string;
   readonly source?: string;
+  readonly productIntent?: ProductIntent;
   readonly nodes: readonly PlanningNode[];
   readonly edges: readonly DependencyEdge[];
 }

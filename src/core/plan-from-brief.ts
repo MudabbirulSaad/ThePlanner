@@ -5,6 +5,7 @@ import type {
   ExecutionSliceNode,
   OpenQuestionNode,
   PlanningGraph,
+  ProductIntent,
   Provenance,
   RequirementNode,
   RiskNode,
@@ -63,6 +64,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
   };
   const scaffoldedFields: string[] = [];
 
+  const productIntent = buildProductIntent(sections, provenance, scaffoldedFields);
   const requirements = buildRequirements(sections, provenance, scaffoldedFields);
   const openQuestions = buildOpenQuestions(sections, provenance, scaffoldedFields);
   const risks = buildRisks(sections, provenance, scaffoldedFields);
@@ -77,6 +79,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
       schemaVersion: currentPlanningGraphSchemaVersion,
       graphVersion: graphVersion(1),
       source: sourceReference,
+      productIntent,
       nodes: [...requirements, ...openQuestions, ...risks, ...components, ...workItems, ...documents, ...slices],
       edges
     },
@@ -96,7 +99,7 @@ function parseBriefSections(content: string): BriefSections {
     open_questions: [],
     raw_idea: []
   };
-  let current: BriefSectionKey = "product_summary";
+  let current: BriefSectionKey = "raw_idea";
 
   for (const line of content.split(/\r?\n/u)) {
     const heading = /^#{2,3}\s+(?<title>.+?)\s*$/u.exec(line)?.groups?.title.toLowerCase();
@@ -112,6 +115,59 @@ function parseBriefSections(content: string): BriefSections {
   }
 
   return buckets;
+}
+
+function buildProductIntent(
+  sections: BriefSections,
+  provenance: Provenance,
+  scaffoldedFields: string[]
+): ProductIntent {
+  const scaffoldNotes: string[] = [];
+  const missingSection = (title: string, note: string): void => {
+    const message = `Product intent ${title} scaffolded because ${title} was empty.`;
+    scaffoldNotes.push(note);
+    scaffoldedFields.push(message);
+  };
+
+  if (sections.product_summary.length === 0) {
+    missingSection("Product Summary", "TODO: Add a concise product summary before rendering the PRD projection.");
+  }
+
+  if (sections.users.length === 0) {
+    missingSection("Users", "TODO: Identify primary users, secondary users, and users explicitly out of scope.");
+  }
+
+  if (sections.goals.length === 0) {
+    missingSection("Goals", "TODO: Define the product and user outcomes this plan should achieve.");
+  }
+
+  if (sections.mvp_scope.length === 0) {
+    missingSection("MVP Scope", "TODO: Define the smallest coherent scope for the first implementation slice.");
+  }
+
+  if (sections.non_goals.length === 0) {
+    missingSection("Non-Goals", "TODO: List capabilities, audiences, and integrations intentionally deferred.");
+  }
+
+  if (sections.constraints.length === 0) {
+    missingSection("Constraints", "TODO: Capture technical, operational, legal, team, and timeline constraints.");
+  }
+
+  if (sections.success_criteria.length === 0) {
+    missingSection("Success Criteria", "TODO: Add measurable signals that prove the MVP solved the right problem.");
+  }
+
+  return {
+    summary: firstMeaningful(sections.product_summary, sections.raw_idea),
+    targetUsers: scaffoldIfEmpty(sections.users, "TODO: Identify target users."),
+    goals: scaffoldIfEmpty(sections.goals, "TODO: Define product goals."),
+    mvpScope: scaffoldIfEmpty(sections.mvp_scope, "TODO: Define MVP scope."),
+    nonGoals: scaffoldIfEmpty(sections.non_goals, "TODO: Define non-goals."),
+    constraints: scaffoldIfEmpty(sections.constraints, "TODO: Define constraints."),
+    successCriteria: scaffoldIfEmpty(sections.success_criteria, "TODO: Define success criteria."),
+    scaffoldNotes,
+    provenance
+  };
 }
 
 function buildRequirements(
@@ -392,7 +448,14 @@ function buildEdges(
 
 function normalizeBriefLine(line: string): string {
   const trimmed = line.trim();
-  if (!trimmed || trimmed === "```" || /^TODO:/iu.test(trimmed) || /^Source idea:/iu.test(trimmed)) {
+  if (
+    !trimmed ||
+    trimmed === "```" ||
+    /^#/u.test(trimmed) ||
+    /^TODO:/iu.test(trimmed) ||
+    /^Source idea:/iu.test(trimmed) ||
+    /^This Markdown file is user-owned\./u.test(trimmed)
+  ) {
     return "";
   }
 
@@ -408,6 +471,10 @@ function firstMeaningful(...groups: readonly (readonly string[])[]): string {
 
 function takeStable(lines: readonly string[], count: number): readonly string[] {
   return [...new Set(lines)].slice(0, count);
+}
+
+function scaffoldIfEmpty(lines: readonly string[], fallback: string): readonly string[] {
+  return lines.length > 0 ? takeStable(lines, lines.length) : [fallback];
 }
 
 function titleFrom(statement: string, fallback: string): string {

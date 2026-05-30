@@ -9,6 +9,7 @@ import type {
   OpenQuestionNode,
   PlanningGraph,
   PlanningNode,
+  Provenance,
   RequirementNode,
   RiskNode,
   ValidationMethod,
@@ -21,6 +22,7 @@ type RawGraph = {
   graph_version: number;
   generated_at?: string;
   source?: string;
+  product_intent?: RawProductIntent;
   nodes: {
     requirements?: RawNode[];
     decisions?: RawNode[];
@@ -38,6 +40,17 @@ type RawGraph = {
 
 type RawNode = Record<string, unknown>;
 type RawEdge = { source: string; target: string; type: DependencyEdge["type"]; rationale?: string };
+type RawProductIntent = {
+  summary?: unknown;
+  target_users?: unknown;
+  goals?: unknown;
+  mvp_scope?: unknown;
+  non_goals?: unknown;
+  constraints?: unknown;
+  success_criteria?: unknown;
+  scaffold_notes?: unknown;
+  provenance?: unknown;
+};
 
 export function parsePlanningGraphJson(value: unknown): PlanningGraph {
   const raw = value as RawGraph;
@@ -48,6 +61,7 @@ export function parsePlanningGraphJson(value: unknown): PlanningGraph {
     graphVersion: version,
     generatedAt: raw.generated_at,
     source: raw.source,
+    productIntent: productIntent(raw.product_intent),
     nodes: [
       ...(raw.nodes.requirements ?? []).map((node) => ({
         id: text(node.id),
@@ -163,6 +177,7 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
     graph_version: graph.graphVersion,
     generated_at: graph.generatedAt,
     source: graph.source,
+    product_intent: serializeProductIntent(graph.productIntent),
     nodes: {
       requirements: graph.nodes.filter(isRequirement).map((node) => ({
         id: node.id,
@@ -255,6 +270,43 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
   };
 }
 
+function productIntent(value: unknown) {
+  if (!value) {
+    return undefined;
+  }
+
+  const raw = record(value);
+  return {
+    summary: text(raw.summary),
+    targetUsers: strings(raw.target_users),
+    goals: strings(raw.goals),
+    mvpScope: strings(raw.mvp_scope),
+    nonGoals: strings(raw.non_goals),
+    constraints: strings(raw.constraints),
+    successCriteria: strings(raw.success_criteria),
+    scaffoldNotes: strings(raw.scaffold_notes),
+    provenance: provenance(raw.provenance)
+  };
+}
+
+function serializeProductIntent(value: PlanningGraph["productIntent"]) {
+  if (!value) {
+    return undefined;
+  }
+
+  return {
+    summary: value.summary,
+    target_users: value.targetUsers,
+    goals: value.goals,
+    mvp_scope: value.mvpScope,
+    non_goals: value.nonGoals,
+    constraints: value.constraints,
+    success_criteria: value.successCriteria,
+    scaffold_notes: value.scaffoldNotes,
+    provenance: serializeProvenance(value.provenance)
+  };
+}
+
 function validationMethods(value: unknown): readonly ValidationMethod[] {
   return array(value).map((item) => {
     const method = record(item);
@@ -266,7 +318,7 @@ function validationMethods(value: unknown): readonly ValidationMethod[] {
   });
 }
 
-function provenance(value: unknown) {
+function provenance(value: unknown): Provenance | undefined {
   if (!value) {
     return undefined;
   }
@@ -277,7 +329,7 @@ function provenance(value: unknown) {
     sourceReference: text(raw.source_reference),
     createdBy: text(raw.created_by),
     confidence: text(raw.confidence)
-  };
+  } as Provenance;
 }
 
 function serializeProvenance(value: PlanningNode["provenance"]) {

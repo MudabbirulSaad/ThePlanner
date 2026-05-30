@@ -515,7 +515,13 @@ describe("planner CLI use case wiring", () => {
         graph: {
           schema_version: "0.1.0",
           graph_version: 1,
-          source: "refined-brief.md"
+          source: "refined-brief.md",
+          product_intent: {
+            summary: "Build a CLI-first ThePlanner workflow that turns a refined brief into a repository-native Planning Graph.",
+            target_users: ["Solo maintainers and engineering leads planning agent-assisted software work."],
+            non_goals: ["Do not call live LLM providers.", "Do not sync external trackers."],
+            scaffold_notes: []
+          }
         }
       });
       expect(validatePlanningGraph(parsePlanningGraphJson(output.graph)).status).toBe("pass");
@@ -557,7 +563,12 @@ describe("planner CLI use case wiring", () => {
         graph: {
           schema_version: "0.1.0",
           graph_version: 1,
-          source: "planning/intake/refined-brief.md"
+          source: "planning/intake/refined-brief.md",
+          product_intent: {
+            summary: "Build a CLI-first ThePlanner workflow that turns a refined brief into a repository-native Planning Graph.",
+            success_criteria: ["The dry run prints deterministic JSON and does not mutate repository files."],
+            scaffold_notes: []
+          }
         },
         event: {
           graph_version_before: 0,
@@ -569,6 +580,7 @@ describe("planner CLI use case wiring", () => {
 
       const savedGraph = parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8")));
       expect(validatePlanningGraph(savedGraph).status).toBe("pass");
+      expect(savedGraph.productIntent?.nonGoals).toEqual(["Do not call live LLM providers.", "Do not sync external trackers."]);
 
       const events = (await readFile("planning/change-log.ndjson", "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(events).toHaveLength(1);

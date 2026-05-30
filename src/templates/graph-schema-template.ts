@@ -9,6 +9,7 @@ export const graphSchemaTemplate = `{
     "graph_version": { "type": "integer", "minimum": 1 },
     "generated_at": { "type": "string" },
     "source": { "type": "string" },
+    "product_intent": { "$ref": "#/$defs/productIntent" },
     "nodes": {
       "type": "object",
       "required": ["requirements", "decisions", "work_items"],
@@ -33,6 +34,31 @@ export const graphSchemaTemplate = `{
   },
   "additionalProperties": false,
   "$defs": {
+    "productIntent": {
+      "type": "object",
+      "required": [
+        "summary",
+        "target_users",
+        "goals",
+        "mvp_scope",
+        "non_goals",
+        "constraints",
+        "success_criteria",
+        "scaffold_notes"
+      ],
+      "properties": {
+        "summary": { "type": "string", "minLength": 1 },
+        "target_users": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "goals": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "mvp_scope": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "non_goals": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "constraints": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "success_criteria": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "scaffold_notes": { "type": "array", "items": { "type": "string" } },
+        "provenance": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
     "node": {
       "type": "object",
       "required": ["id", "title"],

@@ -12,4 +12,3 @@ Workflow:
 6. When complete, move the issue file to `issues/done/`.
 
 Do not start V2 work from memory. Let each issue file define the task, constraints, and validation for that session.
-
