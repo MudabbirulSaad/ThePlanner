@@ -1,6 +1,7 @@
 import type {
   DependencyEdge,
   ExecutionState,
+  OpenQuestionNode,
   PlanningGraph,
   PlanningNode,
   PlanningNodeId,
@@ -23,7 +24,9 @@ export type GraphPatchOperation =
   | "replace_work_item_acceptance_criteria"
   | "replace_work_item_validation_methods"
   | "replace_work_item_dependencies"
-  | "replace_work_item_requirements";
+  | "replace_work_item_requirements"
+  | "replace_open_question_question"
+  | "replace_open_question_blocks_execution";
 
 export interface GraphPatch {
   readonly operation: GraphPatchOperation;
@@ -62,6 +65,19 @@ interface ParsedWorkItemProjection {
   readonly sections: Readonly<Record<string, string>>;
 }
 
+interface ParsedDocumentProjection {
+  readonly id: string;
+  readonly projectionType: string;
+  readonly sections: Readonly<Record<string, string>>;
+}
+
+interface ParsedOpenQuestionListItem {
+  readonly id: string;
+  readonly priority: string;
+  readonly question: string;
+  readonly blocksExecution: boolean;
+}
+
 const executionStates = new Set<ExecutionState>([
   "backlog",
   "ready",
@@ -86,14 +102,29 @@ export function reconcileGraphProjections(
 ): ReconciliationResult {
   const workItems = graph.nodes.filter(isWorkItem);
   const workItemById = new Map<string, WorkItemNode>(workItems.map((workItem) => [workItem.id, workItem]));
+  const openQuestionById = new Map<string, OpenQuestionNode>(
+    graph.nodes.filter(isOpenQuestion).map((openQuestion) => [openQuestion.id, openQuestion])
+  );
   const nodeIds = new Set(graph.nodes.map((node) => node.id));
   const proposedPatches: GraphPatch[] = [];
   const conflicts: ReconciliationConflict[] = [];
   const unsupportedProjectionEdits: UnsupportedProjectionEdit[] = [];
 
   for (const projection of projections) {
-    const parsed = parseWorkItemProjection(projection.content);
+    const parsed = parseProjection(projection.content);
     if (!parsed) {
+      continue;
+    }
+
+    if ("projectionType" in parsed) {
+      compareDocumentOpenQuestions({
+        openQuestionById,
+        parsed,
+        projection,
+        proposedPatches,
+        conflicts,
+        unsupportedProjectionEdits
+      });
       continue;
     }
 
@@ -172,7 +203,21 @@ export function applyGraphPatches(graph: PlanningGraph, patches: readonly GraphP
       continue;
     }
 
-    nodes = nodes.map((node) => (node.id === patch.nodeId && isWorkItem(node) ? patchWorkItem(node, patch) : node));
+    nodes = nodes.map((node) => {
+      if (node.id !== patch.nodeId) {
+        return node;
+      }
+
+      if (isWorkItem(node)) {
+        return patchWorkItem(node, patch);
+      }
+
+      if (isOpenQuestion(node)) {
+        return patchOpenQuestion(node, patch);
+      }
+
+      return node;
+    });
   }
 
   const nextGraph = {
@@ -200,6 +245,13 @@ export function applyGraphPatches(graph: PlanningGraph, patches: readonly GraphP
 
 export function workItemProjectionPaths(graph: PlanningGraph): readonly string[] {
   return graph.nodes.filter(isWorkItem).map((workItem) => renderWorkItemProjection(graph, workItem).path);
+}
+
+export function reconciliationProjectionPaths(graph: PlanningGraph): readonly string[] {
+  return [
+    ...graph.nodes.filter(isDocumentProjection).map((document) => document.path),
+    ...workItemProjectionPaths(graph)
+  ].sort((left, right) => left.localeCompare(right));
 }
 
 function compareScalar(
@@ -430,6 +482,97 @@ function compareUnsupportedBodySection(
   }
 }
 
+function compareDocumentOpenQuestions(args: {
+  readonly openQuestionById: ReadonlyMap<string, OpenQuestionNode>;
+  readonly parsed: ParsedDocumentProjection;
+  readonly projection: ProjectionInput;
+  readonly proposedPatches: GraphPatch[];
+  readonly conflicts: ReconciliationConflict[];
+  readonly unsupportedProjectionEdits: UnsupportedProjectionEdit[];
+}) {
+  if (args.parsed.projectionType !== "prd" && args.parsed.projectionType !== "architecture") {
+    return;
+  }
+
+  const section = args.parsed.sections["Open Questions"];
+  if (!section) {
+    return;
+  }
+
+  const seen = new Set<string>();
+  for (const item of markdownList(section)) {
+    if (!/\boq-[a-zA-Z0-9-]+\b/u.test(item)) {
+      continue;
+    }
+
+    const parsedItem = parseOpenQuestionListItem(item);
+    if (!parsedItem) {
+      const id = /\b(oq-[a-zA-Z0-9-]+)\b/u.exec(item)?.[1] ?? args.parsed.id;
+      args.unsupportedProjectionEdits.push({
+        nodeId: id,
+        field: "open_questions",
+        reason:
+          "Open Question list item changed to an unsupported format. Expected: oq-001 (high priority): Question text Blocks execution.",
+        sourcePath: args.projection.path
+      });
+      continue;
+    }
+
+    if (seen.has(parsedItem.id)) {
+      args.conflicts.push({
+        nodeId: parsedItem.id,
+        field: "open_questions",
+        reason: `Open Question appears more than once in projection: ${parsedItem.id}`,
+        sourcePath: args.projection.path
+      });
+      continue;
+    }
+    seen.add(parsedItem.id);
+
+    const current = args.openQuestionById.get(parsedItem.id);
+    if (!current) {
+      args.conflicts.push({
+        nodeId: parsedItem.id,
+        field: "open_questions",
+        reason: `Open Question does not exist in canonical graph: ${parsedItem.id}`,
+        sourcePath: args.projection.path
+      });
+      continue;
+    }
+
+    if (parsedItem.priority !== current.priority) {
+      args.unsupportedProjectionEdits.push({
+        nodeId: current.id,
+        field: "priority",
+        reason: "Open Question priority edits are detected but not applied by this deterministic reconciliation slice.",
+        sourcePath: args.projection.path
+      });
+    }
+
+    if (parsedItem.question !== current.question) {
+      args.proposedPatches.push({
+        operation: "replace_open_question_question",
+        nodeId: current.id,
+        field: "question",
+        before: current.question,
+        after: parsedItem.question,
+        sourcePath: args.projection.path
+      });
+    }
+
+    if (parsedItem.blocksExecution !== current.blocksExecution) {
+      args.proposedPatches.push({
+        operation: "replace_open_question_blocks_execution",
+        nodeId: current.id,
+        field: "blocks_execution",
+        before: current.blocksExecution,
+        after: parsedItem.blocksExecution,
+        sourcePath: args.projection.path
+      });
+    }
+  }
+}
+
 function validatePatchOutcome(
   graph: PlanningGraph,
   patches: readonly GraphPatch[],
@@ -455,7 +598,7 @@ function validatePatchOutcome(
   ];
 }
 
-function parseWorkItemProjection(content: string): ParsedWorkItemProjection | undefined {
+function parseProjection(content: string): ParsedWorkItemProjection | ParsedDocumentProjection | undefined {
   const match = /^---\n(?<frontmatter>[\s\S]*?)\n---\n(?<body>[\s\S]*)$/u.exec(content);
   if (!match?.groups) {
     return undefined;
@@ -464,7 +607,16 @@ function parseWorkItemProjection(content: string): ParsedWorkItemProjection | un
   const frontmatter = parseFrontmatter(match.groups.frontmatter);
   const id = stringValue(frontmatter.id);
   if (!id?.startsWith("wi-")) {
-    return undefined;
+    const projectionType = stringValue(frontmatter.projection_type);
+    if (!id?.startsWith("doc-") || !projectionType) {
+      return undefined;
+    }
+
+    return {
+      id,
+      projectionType,
+      sections: parseSections(match.groups.body)
+    };
   }
 
   return {
@@ -472,6 +624,15 @@ function parseWorkItemProjection(content: string): ParsedWorkItemProjection | un
     frontmatter,
     sections: parseSections(match.groups.body)
   };
+}
+
+function parseWorkItemProjection(content: string): ParsedWorkItemProjection | undefined {
+  const parsed = parseProjection(content);
+  if (!parsed || "projectionType" in parsed) {
+    return undefined;
+  }
+
+  return parsed;
 }
 
 function parseFrontmatter(source: string): Readonly<Record<string, unknown>> {
@@ -588,6 +749,23 @@ function markdownList(section: string | undefined): readonly string[] {
     .filter((item): item is string => Boolean(item));
 }
 
+function parseOpenQuestionListItem(item: string): ParsedOpenQuestionListItem | undefined {
+  const match =
+    /^(?<id>oq-[a-zA-Z0-9-]+)\s+\((?<priority>low|medium|high) priority\):\s+(?<question>.+?)\s+(?<blocker>Blocks execution|Does not block execution)\.$/u.exec(
+      item.trim()
+    );
+  if (!match?.groups) {
+    return undefined;
+  }
+
+  return {
+    id: match.groups.id,
+    priority: match.groups.priority,
+    question: match.groups.question.trim(),
+    blocksExecution: match.groups.blocker === "Blocks execution"
+  };
+}
+
 function stripInlineCode(value: string): string {
   return value.replace(/^`(?<body>.*)`$/u, "$<body>").replace(/\.$/u, "");
 }
@@ -610,6 +788,26 @@ function patchWorkItem(workItem: WorkItemNode, patch: GraphPatch): WorkItemNode 
   }
 
   return workItem;
+}
+
+function patchOpenQuestion(openQuestion: OpenQuestionNode, patch: GraphPatch): OpenQuestionNode {
+  if (patch.operation === "replace_open_question_question") {
+    return {
+      ...openQuestion,
+      question: patch.after as string,
+      title: questionTitle(patch.after as string)
+    };
+  }
+
+  if (patch.operation === "replace_open_question_blocks_execution") {
+    return { ...openQuestion, blocksExecution: patch.after as boolean };
+  }
+
+  return openQuestion;
+}
+
+function questionTitle(question: string): string {
+  return question.replace(/\?+$/u, "").trim() || question;
 }
 
 function replaceEdges(
@@ -671,4 +869,12 @@ function dedupePatches(patches: readonly GraphPatch[]): readonly GraphPatch[] {
 
 function isWorkItem(node: PlanningNode): node is WorkItemNode {
   return node.kind === "work_item";
+}
+
+function isOpenQuestion(node: PlanningNode): node is OpenQuestionNode {
+  return node.kind === "open_question";
+}
+
+function isDocumentProjection(node: PlanningNode) {
+  return node.kind === "document_projection";
 }

@@ -4,9 +4,10 @@ import { parsePlanningGraphJson } from "../../src/application/index.js";
 import {
   applyGraphPatches,
   reconcileGraphProjections,
+  renderDocumentProjection,
   renderWorkItemProjection
 } from "../../src/core/index.js";
-import type { PlanningNode, WorkItemNode } from "../../src/core/index.js";
+import type { DocumentProjectionNode, PlanningNode, WorkItemNode } from "../../src/core/index.js";
 
 const graph = parsePlanningGraphJson({
   schema_version: "0.1.0",
@@ -53,6 +54,58 @@ if (!workItem) {
 }
 
 const projection = renderWorkItemProjection(graph, workItem as WorkItemNode);
+
+const graphWithOpenQuestionProjection = parsePlanningGraphJson({
+  schema_version: "0.1.0",
+  graph_version: 1,
+  nodes: {
+    requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [
+      {
+        id: "oq-001",
+        title: "Which provider should run planning agents",
+        status: "active",
+        question: "Which provider should run planning agents?",
+        priority: "high",
+        blocks_execution: true
+      }
+    ],
+    hitl_gates: [],
+    components: [],
+    work_items: [
+      {
+        id: "wi-001",
+        title: "Work item",
+        execution_state: "backlog",
+        readiness_snapshot: { graph_version: 1, labels: ["blocked"], reasons: ["Depends on execution-blocking Open Question oq-001."] },
+        acceptance_criteria: ["Done"],
+        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+      }
+    ],
+    document_projections: [
+      {
+        id: "doc-001",
+        title: "Product Requirements",
+        status: "active",
+        path: "docs/prd/product.md",
+        projection_type: "prd"
+      }
+    ],
+    execution_slices: []
+  },
+  edges: [
+    { source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." },
+    { source: "wi-001", target: "oq-001", type: "depends_on", rationale: "Question blocks execution." }
+  ]
+});
+
+const prdProjection = renderDocumentProjection(
+  graphWithOpenQuestionProjection,
+  graphWithOpenQuestionProjection.nodes.find((node) => node.kind === "document_projection") as DocumentProjectionNode
+);
 
 describe("graph reconciliation", () => {
   it("returns no patch for an unchanged Work Item projection", () => {
@@ -213,6 +266,57 @@ describe("graph reconciliation", () => {
     ]);
   });
 
+  it("proposes safe graph patches for deterministic Open Question edits in a document projection", () => {
+    const result = reconcileGraphProjections(graphWithOpenQuestionProjection, [
+      {
+        ...prdProjection,
+        content: prdProjection.content.replace(
+          "oq-001 (high priority): Which provider should run planning agents? Blocks execution.",
+          "oq-001 (high priority): Which local runner should execute planning agents? Does not block execution."
+        )
+      }
+    ]);
+
+    expect(result.proposedPatches).toMatchObject([
+      {
+        operation: "replace_open_question_question",
+        nodeId: "oq-001",
+        field: "question",
+        before: "Which provider should run planning agents?",
+        after: "Which local runner should execute planning agents?"
+      },
+      {
+        operation: "replace_open_question_blocks_execution",
+        nodeId: "oq-001",
+        field: "blocks_execution",
+        before: true,
+        after: false
+      }
+    ]);
+    expect(result.conflicts).toEqual([]);
+  });
+
+  it("keeps ambiguous document projection edits visible as unsupported edits", () => {
+    const result = reconcileGraphProjections(graphWithOpenQuestionProjection, [
+      {
+        ...prdProjection,
+        content: prdProjection.content.replace(
+          "oq-001 (high priority): Which provider should run planning agents? Blocks execution.",
+          "oq-001: maybe decide later"
+        )
+      }
+    ]);
+
+    expect(result.proposedPatches).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.unsupportedProjectionEdits).toMatchObject([
+      {
+        nodeId: "oq-001",
+        field: "open_questions"
+      }
+    ]);
+  });
+
   it("applies safe patches to a new graph version", () => {
     const [patch] = reconcileGraphProjections(graph, [
       { ...projection, content: projection.content.replace("title: Work item", "title: Renamed work item") }
@@ -223,6 +327,27 @@ describe("graph reconciliation", () => {
 
     expect(updated.graphVersion).toBe(2);
     expect(updatedWorkItem?.title).toBe("Renamed work item");
+  });
+
+  it("applies safe document projection patches to Open Question nodes", () => {
+    const patches = reconcileGraphProjections(graphWithOpenQuestionProjection, [
+      {
+        ...prdProjection,
+        content: prdProjection.content.replace(
+          "oq-001 (high priority): Which provider should run planning agents? Blocks execution.",
+          "oq-001 (high priority): Which local runner should execute planning agents? Does not block execution."
+        )
+      }
+    ]).proposedPatches;
+
+    const updated = applyGraphPatches(graphWithOpenQuestionProjection, patches);
+    const updatedQuestion = updated.nodes.find((node) => node.kind === "open_question" && String(node.id) === "oq-001");
+
+    expect(updated.graphVersion).toBe(2);
+    expect(updatedQuestion).toMatchObject({
+      question: "Which local runner should execute planning agents?",
+      blocksExecution: false
+    });
   });
 });
 

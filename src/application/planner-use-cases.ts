@@ -3,11 +3,11 @@ import {
   currentPlanningGraphSchemaVersion,
   generateIntakeQuestions,
   proposePlanningGraphFromBrief,
+  reconciliationProjectionPaths,
   renderRefinedBriefScaffold,
   reconcileGraphProjections,
   renderAllProjections,
   validatePlanningGraph,
-  workItemProjectionPaths
 } from "../core/index.js";
 import type {
   GraphValidationResult,
@@ -785,7 +785,7 @@ export async function reconcileGraphUseCase(args: {
   }
 > {
   const graph = await args.graphRepository.load();
-  const projections = await args.projectionReader.readMany(workItemProjectionPaths(graph));
+  const projections = await args.projectionReader.readMany(reconciliationProjectionPaths(graph));
   const reconciliation = reconcileGraphProjections(graph, projections);
 
   if (!args.apply || reconciliation.proposedPatches.length === 0 || reconciliation.conflicts.length > 0) {

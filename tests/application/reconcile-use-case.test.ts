@@ -5,9 +5,9 @@ import {
   parsePlanningGraphJson,
   reconcileGraphUseCase
 } from "../../src/application/index.js";
-import { renderWorkItemProjection } from "../../src/core/index.js";
+import { renderDocumentProjection, renderWorkItemProjection } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
-import type { PlanningGraph } from "../../src/core/index.js";
+import type { DocumentProjectionNode, PlanningGraph } from "../../src/core/index.js";
 
 function fixtureGraph(): PlanningGraph {
   return parsePlanningGraphJson({
@@ -38,6 +38,56 @@ function fixtureGraph(): PlanningGraph {
       execution_slices: []
     },
     edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
+  });
+}
+
+function fixtureGraphWithOpenQuestionProjection(): PlanningGraph {
+  return parsePlanningGraphJson({
+    schema_version: "0.1.0",
+    graph_version: 1,
+    nodes: {
+      requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+      decisions: [],
+      assumptions: [],
+      risks: [],
+      open_questions: [
+        {
+          id: "oq-001",
+          title: "Which runner executes agents",
+          status: "active",
+          question: "Which runner executes agents?",
+          priority: "high",
+          blocks_execution: true
+        }
+      ],
+      hitl_gates: [],
+      components: [],
+      work_items: [
+        {
+          id: "wi-001",
+          title: "Work item",
+          execution_state: "backlog",
+          readiness_snapshot: { graph_version: 1, labels: ["blocked"], reasons: ["Depends on execution-blocking Open Question oq-001."] },
+          context_summary: "Reconcile a document projection edit.",
+          acceptance_criteria: ["Done"],
+          validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+        }
+      ],
+      document_projections: [
+        {
+          id: "doc-001",
+          title: "Product Requirements",
+          status: "active",
+          path: "docs/prd/product.md",
+          projection_type: "prd"
+        }
+      ],
+      execution_slices: []
+    },
+    edges: [
+      { source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." },
+      { source: "wi-001", target: "oq-001", type: "depends_on", rationale: "Question blocks execution." }
+    ]
   });
 }
 
@@ -96,6 +146,51 @@ describe("reconcile graph use case and planning change log", () => {
       graph_version_after: 2,
       affected_node_ids: ["wi-001"],
       summary: "Applied 1 safe reconciliation patch(es)."
+    });
+  });
+
+  it("applies safe richer document projection patches and writes a change-log event", async () => {
+    const graph = fixtureGraphWithOpenQuestionProjection();
+    let saved: PlanningGraph | undefined;
+    let event: PlanningChangeLogEvent | undefined;
+    let requestedPaths: readonly string[] = [];
+    const document = graph.nodes.find((node) => node.kind === "document_projection") as DocumentProjectionNode;
+    const projection = renderDocumentProjection(graph, document);
+
+    const result = await reconcileGraphUseCase({
+      graphRepository: { load: async () => graph, save: async (next) => { saved = next; } },
+      projectionReader: {
+        readMany: async (paths) => {
+          requestedPaths = paths;
+          return [
+            {
+              ...projection,
+              content: projection.content.replace(
+                "oq-001 (high priority): Which runner executes agents? Blocks execution.",
+                "oq-001 (high priority): Which local runner executes agents? Does not block execution."
+              )
+            }
+          ];
+        }
+      },
+      changeLogWriter: { append: async (nextEvent) => { event = nextEvent; } },
+      apply: true,
+      timestamp: "2026-05-29T00:00:00+10:00"
+    });
+
+    const savedQuestion = saved?.nodes.find((node) => node.kind === "open_question" && String(node.id) === "oq-001");
+    expect(requestedPaths).toContain("docs/prd/product.md");
+    expect(result.applied).toBe(true);
+    expect(result.proposedPatches).toHaveLength(2);
+    expect(savedQuestion).toMatchObject({
+      question: "Which local runner executes agents?",
+      blocksExecution: false
+    });
+    expect(event).toMatchObject({
+      graph_version_before: 1,
+      graph_version_after: 2,
+      affected_node_ids: ["oq-001"],
+      summary: "Applied 2 safe reconciliation patch(es)."
     });
   });
 
