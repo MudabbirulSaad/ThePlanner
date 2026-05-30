@@ -1,5 +1,6 @@
 import type {
   AssumptionNode,
+  ComponentNode,
   DependencyEdge,
   DocumentProjectionNode,
   OpenQuestionNode,
@@ -144,8 +145,8 @@ function renderRfcBody(graph: PlanningGraph): string {
 }
 
 function renderArchitectureBody(graph: PlanningGraph): string {
-  const components = graph.nodes.filter((node) => node.kind === "component");
-  return `## Components\n\n${list(components.map((node) => `${node.id}: ${node.title}`))}\n\n## Architecture Boundary\n\nCore remains independent from CLI and infrastructure adapters.\n`;
+  const components = graph.nodes.filter(isComponent);
+  return `## Components\n\n${list(components.map((node) => renderComponent(node)))}\n\n## Architecture Boundary\n\nCore remains independent from CLI and infrastructure adapters.\n`;
 }
 
 function renderDependencyView(graph: PlanningGraph, document: DocumentProjectionNode): string {
@@ -205,6 +206,24 @@ function renderRisk(node: RiskNode): string {
   return `${node.id} (${node.likelihood} likelihood, ${node.impact} impact): ${node.title}. Mitigation: ${node.mitigation} ${blocker}`;
 }
 
+function renderComponent(node: ComponentNode): string {
+  const interfaces = node.interfaces.length === 0
+    ? "Interfaces: none."
+    : `Interfaces: ${node.interfaces
+        .map((componentInterface) => `${componentInterface.name} (${componentInterface.direction}) - ${trimSentence(componentInterface.contract)}`)
+        .join("; ")}.`;
+  const dependencies = node.dependsOn.length === 0
+    ? "Depends on: none."
+    : `Depends on: ${node.dependsOn.map((id) => `\`${id}\``).join(", ")}.`;
+  const constraints = node.constraints.length === 0 ? "" : ` Constraints: ${node.constraints.map(trimSentence).join("; ")}.`;
+  const risks = node.risks.length === 0 ? "" : ` Risks: ${node.risks.map(trimSentence).join("; ")}.`;
+  return `${node.id}: ${node.title}. Responsibility: ${node.responsibility} ${interfaces} ${dependencies}${constraints}${risks}`;
+}
+
+function trimSentence(value: string): string {
+  return value.replace(/[.!?]+$/u, "");
+}
+
 function renderWorkItemTrace(graph: PlanningGraph, workItem: WorkItemNode): string {
   const requirements = outgoing(graph, workItem.id, "satisfies").map((edge) => edge.target);
   const dependencies = outgoing(graph, workItem.id, "depends_on").map((edge) => edge.target);
@@ -244,4 +263,8 @@ function isOpenQuestion(node: PlanningNode): node is OpenQuestionNode {
 
 function isRisk(node: PlanningNode): node is RiskNode {
   return node.kind === "risk";
+}
+
+function isComponent(node: PlanningNode): node is ComponentNode {
+  return node.kind === "component";
 }

@@ -1,6 +1,7 @@
 import type {
   AssumptionNode,
   ComponentNode,
+  ComponentInterface,
   DecisionNode,
   DependencyEdge,
   DocumentProjectionNode,
@@ -129,7 +130,11 @@ export function parsePlanningGraphJson(value: unknown): PlanningGraph {
         kind: "component",
         title: text(node.title),
         status: text(node.status),
-        responsibility: text(node.responsibility)
+        responsibility: text(node.responsibility),
+        interfaces: componentInterfaces(node.interfaces),
+        dependsOn: strings(node.depends_on),
+        constraints: strings(node.constraints),
+        risks: strings(node.risks)
       })),
       ...(raw.nodes.work_items ?? []).map((node) => ({
         id: text(node.id),
@@ -235,6 +240,14 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
         id: node.id,
         title: node.title,
         responsibility: node.responsibility,
+        interfaces: node.interfaces.map((componentInterface) => ({
+          name: componentInterface.name,
+          direction: componentInterface.direction,
+          contract: componentInterface.contract
+        })),
+        depends_on: node.dependsOn,
+        constraints: node.constraints,
+        risks: node.risks,
         status: node.status
       })),
       work_items: graph.nodes.filter(isWorkItem).map((node) => ({
@@ -315,6 +328,17 @@ function validationMethods(value: unknown): readonly ValidationMethod[] {
       command: optionalText(method.command),
       expectedResult: text(method.expected_result)
     } as ValidationMethod;
+  });
+}
+
+function componentInterfaces(value: unknown): readonly ComponentInterface[] {
+  return array(value).map((item) => {
+    const componentInterface = record(item);
+    return {
+      name: text(componentInterface.name),
+      direction: text(componentInterface.direction),
+      contract: text(componentInterface.contract)
+    } as ComponentInterface;
   });
 }
 

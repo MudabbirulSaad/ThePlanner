@@ -108,4 +108,50 @@ describe("projection rendering", () => {
 
     expect(rendered?.content).toBe(readFileSync("tests/golden/prd-projection.md", "utf8"));
   });
+
+  it("renders architecture-grade component details", () => {
+    const graph = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 3,
+      nodes: {
+        requirements: [],
+        decisions: [],
+        components: [
+          {
+            id: "comp-001",
+            title: "Planning graph core",
+            responsibility: "Own graph validation.",
+            interfaces: [
+              {
+                name: "Domain API",
+                direction: "internal",
+                contract: "Pure functions return validation results."
+              }
+            ],
+            depends_on: [],
+            constraints: ["No filesystem access."],
+            risks: ["Schema drift can break projections."],
+            status: "active"
+          }
+        ],
+        work_items: [],
+        document_projections: [
+          {
+            id: "doc-001",
+            title: "Planner Architecture",
+            path: "docs/architecture/planner.md",
+            projection_type: "architecture"
+          }
+        ]
+      },
+      edges: []
+    });
+    const rendered = renderAllProjections(graph).find(
+      (projection) => projection.path === "docs/architecture/planner.md"
+    );
+
+    expect(rendered?.content).toContain(
+      "- comp-001: Planning graph core. Responsibility: Own graph validation. Interfaces: Domain API (internal) - Pure functions return validation results. Depends on: none. Constraints: No filesystem access. Risks: Schema drift can break projections."
+    );
+  });
 });

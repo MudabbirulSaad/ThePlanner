@@ -62,4 +62,94 @@ describe("planning graph JSON mapping", () => {
       }
     });
   });
+
+  it("round-trips architecture-grade component details", () => {
+    const graph = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [
+          {
+            id: "comp-001",
+            title: "Planning graph core",
+            responsibility: "Own planning graph validation and readiness derivation.",
+            interfaces: [
+              {
+                name: "Domain API",
+                direction: "internal",
+                contract: "Pure functions accept graph input and return validation output."
+              }
+            ],
+            depends_on: ["comp-002"],
+            constraints: ["No filesystem access from core."],
+            risks: ["Graph changes can break generated projections."],
+            status: "active"
+          },
+          {
+            id: "comp-002",
+            title: "Projection renderer",
+            responsibility: "Render graph-backed Markdown projections.",
+            status: "active"
+          }
+        ],
+        work_items: [],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: []
+    });
+
+    expect(graph.nodes.find((node) => `${node.id}` === "comp-001")).toMatchObject({
+      kind: "component",
+      interfaces: [
+        {
+          name: "Domain API",
+          direction: "internal",
+          contract: "Pure functions accept graph input and return validation output."
+        }
+      ],
+      dependsOn: ["comp-002"],
+      constraints: ["No filesystem access from core."],
+      risks: ["Graph changes can break generated projections."]
+    });
+    expect(graph.nodes.find((node) => `${node.id}` === "comp-002")).toMatchObject({
+      kind: "component",
+      interfaces: [],
+      dependsOn: [],
+      constraints: [],
+      risks: []
+    });
+    expect(serializePlanningGraphJson(graph)).toMatchObject({
+      nodes: {
+        components: [
+          {
+            id: "comp-001",
+            interfaces: [
+              {
+                name: "Domain API",
+                direction: "internal",
+                contract: "Pure functions accept graph input and return validation output."
+              }
+            ],
+            depends_on: ["comp-002"],
+            constraints: ["No filesystem access from core."],
+            risks: ["Graph changes can break generated projections."]
+          },
+          {
+            id: "comp-002",
+            interfaces: [],
+            depends_on: [],
+            constraints: [],
+            risks: []
+          }
+        ]
+      }
+    });
+  });
 });

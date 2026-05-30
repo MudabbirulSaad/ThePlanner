@@ -2,6 +2,7 @@ import type {
   DependencyEdge,
   DocumentProjectionNode,
   HitlGateNode,
+  ComponentNode,
   PlanningGraph,
   PlanningNode,
   PlanningNodeId,
@@ -111,6 +112,63 @@ export function validatePlanningGraph(graph: PlanningGraph): GraphValidationResu
         code: "document_projection_unsafe_path",
         message: `Document Projection path must be a safe relative path within the workspace: ${document.id}`,
         nodeId: document.id
+      });
+    }
+  }
+
+  for (const component of graph.nodes.filter(isComponent)) {
+    if (component.interfaces.some((componentInterface) => !componentInterface.name.trim() || !componentInterface.contract.trim())) {
+      semanticErrors.push({
+        code: "component_interface_missing_contract",
+        message: `Component interface must include a name and contract: ${component.id}`,
+        nodeId: component.id
+      });
+    }
+
+    if (
+      component.interfaces.some(
+        (componentInterface) => !["inbound", "outbound", "internal"].includes(componentInterface.direction)
+      )
+    ) {
+      semanticErrors.push({
+        code: "component_interface_invalid_direction",
+        message: `Component interface direction must be inbound, outbound, or internal: ${component.id}`,
+        nodeId: component.id
+      });
+    }
+
+    for (const dependency of component.dependsOn) {
+      const target = nodeById.get(dependency);
+      if (dependency === component.id) {
+        semanticErrors.push({
+          code: "component_self_dependency",
+          message: `Component must not depend on itself: ${component.id}`,
+          nodeId: component.id
+        });
+      }
+
+      if (target?.kind !== "component") {
+        semanticErrors.push({
+          code: "component_dependency_missing",
+          message: `Component dependency must reference an existing Component: ${component.id} depends on ${dependency}`,
+          nodeId: component.id
+        });
+      }
+    }
+  }
+
+  for (const edge of graph.edges.filter((candidate) => candidate.type === "references")) {
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    if (target?.kind !== "component") {
+      continue;
+    }
+
+    if (!isWorkItem(source) && !isDocumentProjection(source)) {
+      semanticErrors.push({
+        code: "component_reference_invalid_source",
+        message: `Component reference must come from a Work Item or Document Projection: ${edge.source} references ${edge.target}`,
+        edge
       });
     }
   }
@@ -336,8 +394,12 @@ function isHitlGate(node: PlanningNode): node is HitlGateNode {
   return node.kind === "hitl_gate";
 }
 
-function isDocumentProjection(node: PlanningNode): node is DocumentProjectionNode {
-  return node.kind === "document_projection";
+function isDocumentProjection(node: PlanningNode | undefined): node is DocumentProjectionNode {
+  return node?.kind === "document_projection";
+}
+
+function isComponent(node: PlanningNode | undefined): node is ComponentNode {
+  return node?.kind === "component";
 }
 
 function isSafeRelativePath(path: string): boolean {

@@ -20,7 +20,7 @@ export const graphSchemaTemplate = `{
         "risks": { "type": "array", "items": { "$ref": "#/$defs/node" } },
         "open_questions": { "type": "array", "items": { "$ref": "#/$defs/node" } },
         "hitl_gates": { "type": "array", "items": { "$ref": "#/$defs/node" } },
-        "components": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+        "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
         "work_items": { "type": "array", "items": { "$ref": "#/$defs/workItem" } },
         "document_projections": { "type": "array", "items": { "$ref": "#/$defs/node" } },
         "execution_slices": { "type": "array", "items": { "$ref": "#/$defs/node" } }
@@ -100,6 +100,34 @@ export const graphSchemaTemplate = `{
         "validation_methods": { "type": "array", "items": { "type": "object" }, "minItems": 1 }
       },
       "additionalProperties": true
+    },
+    "component": {
+      "type": "object",
+      "required": ["id", "title", "responsibility"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^comp-[0-9]{3}$" },
+        "title": { "type": "string", "minLength": 1 },
+        "responsibility": { "type": "string", "minLength": 1 },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "direction", "contract"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "direction": { "type": "string", "enum": ["inbound", "outbound", "internal"] },
+              "contract": { "type": "string", "minLength": 1 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "depends_on": { "type": "array", "items": { "type": "string", "pattern": "^comp-[0-9]{3}$" } },
+        "constraints": { "type": "array", "items": { "type": "string" } },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "status": { "type": "string" },
+        "provenance": { "type": "object" }
+      },
+      "additionalProperties": false
     },
     "edge": {
       "type": "object",

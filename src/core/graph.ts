@@ -119,8 +119,18 @@ export interface HitlGateNode extends PlanningNodeBase<"hitl_gate", HitlGateId> 
   readonly resolution?: string;
 }
 
+export interface ComponentInterface {
+  readonly name: string;
+  readonly direction: "inbound" | "outbound" | "internal";
+  readonly contract: string;
+}
+
 export interface ComponentNode extends PlanningNodeBase<"component", ComponentId> {
   readonly responsibility: string;
+  readonly interfaces: readonly ComponentInterface[];
+  readonly dependsOn: readonly ComponentId[];
+  readonly constraints: readonly string[];
+  readonly risks: readonly string[];
 }
 
 export type ExecutionState =

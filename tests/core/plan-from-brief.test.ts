@@ -55,6 +55,26 @@ describe("plan from refined brief proposal", () => {
       "comp-002",
       "comp-003"
     ]);
+    expect(first.graph.nodes.filter((node) => node.kind === "component")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "comp-002",
+          interfaces: [
+            {
+              name: "Domain API",
+              direction: "internal",
+              contract: "Pure TypeScript functions transform graph inputs without filesystem or process access."
+            }
+          ],
+          constraints: [
+            "Core graph logic must remain pure TypeScript domain code without filesystem access."
+          ],
+          risks: [
+            "Risk: inferred plans may be too coarse when the brief leaves implementation detail unknown."
+          ]
+        })
+      ])
+    );
     expect(first.graph.nodes.filter((node) => node.kind === "work_item")).toHaveLength(3);
     expect(first.graph.nodes.filter((node) => node.kind === "document_projection").map((node) => node.id)).toEqual([
       "doc-001",

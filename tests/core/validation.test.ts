@@ -121,4 +121,27 @@ describe("graph validation and readiness", () => {
       })
     );
   });
+
+  it("rejects malformed component relationships and interfaces", () => {
+    const raw = cloneGraph();
+    raw.nodes.components[0].interfaces = [
+      { name: "", direction: "sideways", contract: "" }
+    ];
+    raw.nodes.components[0].depends_on = ["comp-001", "comp-missing"];
+    raw.edges.push({
+      source: "req-001",
+      target: "comp-001",
+      type: "references",
+      rationale: "Requirement should not directly reference a component."
+    });
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+    const codes = result.semanticErrors.map((error) => error.code);
+
+    expect(codes).toContain("component_interface_missing_contract");
+    expect(codes).toContain("component_interface_invalid_direction");
+    expect(codes).toContain("component_self_dependency");
+    expect(codes).toContain("component_dependency_missing");
+    expect(codes).toContain("component_reference_invalid_source");
+  });
 });

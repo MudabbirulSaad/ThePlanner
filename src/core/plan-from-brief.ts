@@ -286,23 +286,103 @@ function buildRisks(
 
 function buildComponents(sections: BriefSections, scaffoldedFields: string[]): readonly ComponentNode[] {
   const text = Object.values(sections).flat().join(" ").toLowerCase();
+  const architectureRisks = [...sections.constraints, ...sections.open_questions].filter((line) =>
+    /\b(risk|concern|uncertain|unknown|dependency|depends|security|privacy)\b/iu.test(line)
+  );
   const candidates = [
-    { match: /\b(cli|command|terminal)\b/u, title: "CLI adapter", responsibility: "Expose planner workflows as deterministic local commands." },
-    { match: /\b(graph|planning graph|dependency)\b/u, title: "Planning graph core", responsibility: "Represent planning nodes, dependency edges, validation, and readiness." },
-    { match: /\b(file|filesystem|markdown|repository|repo)\b/u, title: "Filesystem projections", responsibility: "Read and write repository-native planning artifacts." },
-    { match: /\b(api|server|service|backend)\b/u, title: "Application service", responsibility: "Coordinate use cases behind external interfaces." },
-    { match: /\b(ui|frontend|web|screen)\b/u, title: "User interface", responsibility: "Provide the user-facing planning experience." }
+    {
+      match: /\b(cli|command|terminal)\b/u,
+      title: "CLI adapter",
+      responsibility: "Expose planner workflows as deterministic local commands.",
+      interfaces: [
+        {
+          name: "Command interface",
+          direction: "inbound" as const,
+          contract: "Accepts local command arguments and prints deterministic output."
+        }
+      ],
+      constraints: ["Keep command behavior deterministic and pipeline-friendly."],
+      dependsOnTitle: "Application service"
+    },
+    {
+      match: /\b(graph|planning graph|dependency)\b/u,
+      title: "Planning graph core",
+      responsibility: "Represent planning nodes, dependency edges, validation, and readiness.",
+      interfaces: [
+        {
+          name: "Domain API",
+          direction: "internal" as const,
+          contract: "Pure TypeScript functions transform graph inputs without filesystem or process access."
+        }
+      ],
+      constraints: matchingLines(sections.constraints, /\b(core|graph|domain|pure)\b/iu),
+      dependsOnTitle: undefined
+    },
+    {
+      match: /\b(file|filesystem|markdown|repository|repo)\b/u,
+      title: "Filesystem projections",
+      responsibility: "Read and write repository-native planning artifacts.",
+      interfaces: [
+        {
+          name: "Projection IO",
+          direction: "outbound" as const,
+          contract: "Reads and writes Markdown and JSON artifacts at stable relative paths."
+        }
+      ],
+      constraints: matchingLines(sections.constraints, /\b(file|filesystem|markdown|repo|repository|path)\b/iu),
+      dependsOnTitle: "Planning graph core"
+    },
+    {
+      match: /\b(api|server|service|backend)\b/u,
+      title: "Application service",
+      responsibility: "Coordinate use cases behind external interfaces.",
+      interfaces: [
+        {
+          name: "Use case port",
+          direction: "internal" as const,
+          contract: "Coordinates core operations through explicit input and output ports."
+        }
+      ],
+      constraints: matchingLines(sections.constraints, /\b(service|backend|api|port|use case)\b/iu),
+      dependsOnTitle: "Planning graph core"
+    },
+    {
+      match: /\b(ui|frontend|web|screen)\b/u,
+      title: "User interface",
+      responsibility: "Provide the user-facing planning experience.",
+      interfaces: [
+        {
+          name: "User workflow",
+          direction: "inbound" as const,
+          contract: "Presents planning state and captures user review decisions."
+        }
+      ],
+      constraints: matchingLines(sections.constraints, /\b(ui|frontend|web|screen|accessibility)\b/iu),
+      dependsOnTitle: "Application service"
+    }
   ];
 
-  const components: ComponentNode[] = candidates
+  const selected = candidates
     .filter((candidate) => candidate.match.test(text))
-    .slice(0, 3)
-    .map((candidate, index) => ({
+    .slice(0, 3);
+  const idByTitle = new Map<string, ComponentNode["id"]>(
+    selected.map((candidate, index) => [
+      candidate.title,
+      stableId<ComponentNode["id"]>(`comp-${String(index + 1).padStart(3, "0")}`, "comp")
+    ])
+  );
+  const components: ComponentNode[] = selected.map((candidate, index) => ({
       id: stableId(`comp-${String(index + 1).padStart(3, "0")}`, "comp"),
       kind: "component" as const,
       title: candidate.title,
       status: "active" as const,
-      responsibility: candidate.responsibility
+      responsibility: candidate.responsibility,
+      interfaces: candidate.interfaces,
+      dependsOn: candidate.dependsOnTitle && idByTitle.has(candidate.dependsOnTitle)
+        ? [idByTitle.get(candidate.dependsOnTitle)!]
+        : [],
+      constraints: takeStable(candidate.constraints, 3),
+      risks: takeStable(architectureRisks, 2)
     }));
 
   if (components.length === 0) {
@@ -471,6 +551,10 @@ function firstMeaningful(...groups: readonly (readonly string[])[]): string {
 
 function takeStable(lines: readonly string[], count: number): readonly string[] {
   return [...new Set(lines)].slice(0, count);
+}
+
+function matchingLines(lines: readonly string[], pattern: RegExp): readonly string[] {
+  return lines.filter((line) => pattern.test(line));
 }
 
 function scaffoldIfEmpty(lines: readonly string[], fallback: string): readonly string[] {
