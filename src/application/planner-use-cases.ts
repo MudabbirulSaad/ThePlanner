@@ -135,6 +135,36 @@ interface ParsedGraphOperationProposal {
   readonly approved: boolean;
 }
 
+export interface GraphOperationUserAnswerInput {
+  readonly questionId?: string;
+  readonly question?: string;
+  readonly answer: string;
+  readonly sourceReference?: string;
+}
+
+export interface GraphOperationProposerInput {
+  readonly graph: PlanningGraph;
+  readonly intakeBrief?: {
+    readonly sourcePath: string;
+    readonly content: string;
+  };
+  readonly userAnswers?: readonly GraphOperationUserAnswerInput[];
+}
+
+export interface GraphOperationProposerProposal {
+  readonly operation: unknown;
+  readonly sourceReference?: string;
+  readonly rationale?: string;
+}
+
+export interface GraphOperationProposerResult {
+  readonly proposals: readonly GraphOperationProposerProposal[];
+}
+
+export interface GraphOperationProposer {
+  readonly propose: (input: GraphOperationProposerInput) => Promise<GraphOperationProposerResult> | GraphOperationProposerResult;
+}
+
 export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
 
 export interface RefinedBriefWriter {
@@ -372,6 +402,28 @@ export interface AgentRunDecisionResult {
   readonly runId: string;
   readonly workItemId: string;
   readonly event: PlanningChangeLogEvent;
+  readonly message: string;
+}
+
+export interface GraphOperationDryRunResult {
+  readonly status: "candidate" | "rejected";
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly sourcePath: string;
+  readonly operation: string;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly approvalRequired: boolean;
+  readonly approvalCategory: string;
+  readonly approvalRationale: string;
+  readonly affectedNodeIds: readonly string[];
+  readonly candidateGraph?: unknown;
+  readonly operationErrors: readonly {
+    readonly code: string;
+    readonly message: string;
+    readonly nodeId?: string;
+  }[];
+  readonly validation: GraphValidationResult;
   readonly message: string;
 }
 
@@ -794,29 +846,143 @@ export async function graphOperationDryRunUseCase(args: {
   readonly graphRepository: GraphRepository;
   readonly proposalReader: GraphOperationProposalReader;
   readonly fromPath: string;
+}): Promise<GraphOperationDryRunResult> {
+  const graph = await args.graphRepository.load();
+  const { operation } = parseGraphOperationProposal(await args.proposalReader.readJson(args.fromPath));
+  return dryRunGraphOperationCandidate({
+    graph,
+    operation,
+    sourcePath: args.fromPath
+  });
+}
+
+export async function proposeGraphOperationsUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly proposer: GraphOperationProposer;
+  readonly intakeBrief?: {
+    readonly sourcePath: string;
+    readonly content: string;
+  };
+  readonly userAnswers?: readonly GraphOperationUserAnswerInput[];
 }): Promise<{
   readonly status: "candidate" | "rejected";
   readonly dryRun: true;
   readonly applied: false;
-  readonly sourcePath: string;
-  readonly operation: string;
+  readonly proposalCount: number;
   readonly graphVersionBefore: number;
   readonly graphVersionAfter: number;
-  readonly approvalRequired: boolean;
-  readonly approvalCategory: string;
-  readonly approvalRationale: string;
-  readonly affectedNodeIds: readonly string[];
+  readonly results: readonly GraphOperationDryRunResult[];
   readonly candidateGraph?: unknown;
-  readonly operationErrors: readonly {
-    readonly code: string;
-    readonly message: string;
-    readonly nodeId?: string;
-  }[];
   readonly validation: GraphValidationResult;
   readonly message: string;
 }> {
   const graph = await args.graphRepository.load();
-  const { operation } = parseGraphOperationProposal(await args.proposalReader.readJson(args.fromPath));
+  const proposerResult = await args.proposer.propose({
+    graph: deepCloneApplicationValue(graph),
+    ...(args.intakeBrief ? { intakeBrief: deepCloneApplicationValue(args.intakeBrief) } : {}),
+    ...(args.userAnswers ? { userAnswers: deepCloneApplicationValue(args.userAnswers) } : {})
+  });
+  const results: GraphOperationDryRunResult[] = [];
+  let candidateGraph = deepCloneApplicationValue(graph);
+
+  for (const [index, proposal] of proposerResult.proposals.entries()) {
+    const sourcePath = proposal.sourceReference ?? args.intakeBrief?.sourcePath ?? `graph-operation-proposer#${index + 1}`;
+    let parsedOperation: ProposedGraphOperation;
+    try {
+      parsedOperation = parseProposedGraphOperationJson(proposal.operation);
+    } catch (error) {
+      const result = rejectedGraphOperationParseResult({
+        graph: candidateGraph,
+        sourcePath,
+        error
+      });
+      results.push(result);
+
+      return {
+        status: "rejected",
+        dryRun: true,
+        applied: false,
+        proposalCount: proposerResult.proposals.length,
+        graphVersionBefore: graph.graphVersion,
+        graphVersionAfter: candidateGraph.graphVersion,
+        results,
+        validation: validatePlanningGraph(candidateGraph),
+        message: "At least one proposed Graph Operation was rejected. No planning files were written."
+      };
+    }
+    const result = dryRunGraphOperationCandidate({
+      graph: candidateGraph,
+      operation: parsedOperation,
+      sourcePath
+    });
+    results.push(result);
+
+    if (result.status === "rejected") {
+      return {
+        status: "rejected",
+        dryRun: true,
+        applied: false,
+        proposalCount: proposerResult.proposals.length,
+        graphVersionBefore: graph.graphVersion,
+        graphVersionAfter: candidateGraph.graphVersion,
+        results,
+        validation: validatePlanningGraph(candidateGraph),
+        message: "At least one proposed Graph Operation was rejected. No planning files were written."
+      };
+    }
+
+    candidateGraph = parsePlanningGraphJson(result.candidateGraph);
+  }
+
+  return {
+    status: "candidate",
+    dryRun: true,
+    applied: false,
+    proposalCount: proposerResult.proposals.length,
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: candidateGraph.graphVersion,
+    results,
+    candidateGraph: serializePlanningGraphJson(candidateGraph),
+    validation: validatePlanningGraph(candidateGraph),
+    message: "Dry run only. Proposed Graph Operations were applied to a validated candidate graph; no planning files were written."
+  };
+}
+
+function rejectedGraphOperationParseResult(args: {
+  readonly graph: PlanningGraph;
+  readonly sourcePath: string;
+  readonly error: unknown;
+}): GraphOperationDryRunResult {
+  return {
+    status: "rejected",
+    dryRun: true,
+    applied: false,
+    sourcePath: args.sourcePath,
+    operation: "InvalidProposal",
+    graphVersionBefore: args.graph.graphVersion,
+    graphVersionAfter: args.graph.graphVersion,
+    approvalRequired: false,
+    approvalCategory: "none",
+    approvalRationale: "Operation was rejected before approval classification.",
+    affectedNodeIds: [],
+    operationErrors: [
+      {
+        code: "graph_operation_proposal_invalid",
+        message: args.error instanceof Error ? args.error.message : String(args.error)
+      }
+    ],
+    validation: validatePlanningGraph(args.graph),
+    message: "Proposed Graph Operation could not be parsed. No planning files were written."
+  };
+}
+
+function dryRunGraphOperationCandidate(args: {
+  readonly graph: PlanningGraph;
+  readonly operation: ProposedGraphOperation;
+  readonly sourcePath: string;
+}): GraphOperationDryRunResult {
+  const graph = args.graph;
+  const operation = args.operation;
   const applyResult = applyGraphOperationToCandidate(graph, operation);
   const affectedNodeIds = affectedNodeIdsForGraphOperation(operation);
 
@@ -825,7 +991,7 @@ export async function graphOperationDryRunUseCase(args: {
       status: "rejected",
       dryRun: true,
       applied: false,
-      sourcePath: args.fromPath,
+      sourcePath: args.sourcePath,
       operation: operation.kind,
       graphVersionBefore: graph.graphVersion,
       graphVersionAfter: graph.graphVersion,
@@ -845,7 +1011,7 @@ export async function graphOperationDryRunUseCase(args: {
       status: "rejected",
       dryRun: true,
       applied: false,
-      sourcePath: args.fromPath,
+      sourcePath: args.sourcePath,
       operation: operation.kind,
       graphVersionBefore: graph.graphVersion,
       graphVersionAfter: applyResult.candidateGraph.graphVersion,
@@ -868,7 +1034,7 @@ export async function graphOperationDryRunUseCase(args: {
     status: "candidate",
     dryRun: true,
     applied: false,
-    sourcePath: args.fromPath,
+    sourcePath: args.sourcePath,
     operation: operation.kind,
     graphVersionBefore: graph.graphVersion,
     graphVersionAfter: applyResult.candidateGraph.graphVersion,
@@ -1555,6 +1721,10 @@ function parseJsonObject(content: string, artifactName: string): Record<string, 
   } catch (error) {
     throw new Error(`Invalid ${artifactName}: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function deepCloneApplicationValue<TValue>(value: TValue): TValue {
+  return structuredClone(value);
 }
 
 function parseJsonObjectProperty(value: unknown, path: string): Record<string, unknown> {
