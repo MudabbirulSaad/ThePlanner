@@ -12,6 +12,7 @@ import {
   FileChangeLogWriter,
   FileContextReader,
   FileGraphOperationProposalReader,
+  FileGraphOperationUserAnswerReader,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
   FilePlanningGraphSchemaValidator,
@@ -26,7 +27,13 @@ import {
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
 import type { PlanningChangeLogEvent } from "../../src/application/index.js";
-import type { AgentRunner, ValidationCommandRunner } from "../../src/application/index.js";
+import type {
+  AgentRunner,
+  GraphOperationProposer,
+  GraphOperationProposerInput,
+  GraphOperationProposerResult,
+  ValidationCommandRunner
+} from "../../src/application/index.js";
 import type { PlanningGraph } from "../../src/core/index.js";
 
 const graph = parsePlanningGraphJson({
@@ -66,6 +73,14 @@ function expectJsonError(result: { readonly exitCode: number; readonly stdout: s
     status: "failed",
     error: { message }
   });
+}
+
+class CliFakeProposer implements GraphOperationProposer {
+  public constructor(private readonly result: (input: GraphOperationProposerInput) => GraphOperationProposerResult) {}
+
+  public propose(input: GraphOperationProposerInput): GraphOperationProposerResult {
+    return this.result(input);
+  }
 }
 
 describe("planner CLI use case wiring", () => {
@@ -1614,6 +1629,123 @@ describe("planner CLI use case wiring", () => {
       });
       expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
       await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("dry-runs intake grilling proposals in JSON and human-readable output without writing planning files", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-grill-dry-run-"));
+    const proposer = new CliFakeProposer((input) => ({
+      proposals: [
+        {
+          sourceReference: input.userAnswers?.[0]?.sourceReference ?? `${input.intakeBrief?.sourcePath}#audience`,
+          operation: input.userAnswers
+            ? {
+                operation: "add_decision",
+                decision: {
+                  id: "dec-001",
+                  title: "Primary audience",
+                  status: "accepted",
+                  selected_option: input.userAnswers[0]?.answer ?? "Maintainers",
+                  rationale: "The answer supplies the missing audience commitment.",
+                  rejected_alternatives: [],
+                  unresolved_questions: [],
+                  provenance: {
+                    source_type: "user_answer",
+                    source_reference: input.userAnswers[0]?.sourceReference,
+                    created_by: "cli fake proposer",
+                    confidence: "high"
+                  }
+                },
+                approval_classification: {
+                  category: "commitment_changing",
+                  rationale: "Accepted Decisions from grilling answers change planning commitments."
+                }
+              }
+            : {
+                operation: "add_open_question",
+                open_question: {
+                  id: "oq-001",
+                  title: "Primary audience",
+                  question: "Who is the primary audience for the first release?",
+                  priority: "high",
+                  blocks_execution: true,
+                  provenance: {
+                    source_type: "planner_inference",
+                    source_reference: `${input.intakeBrief?.sourcePath}#audience`,
+                    created_by: "cli fake proposer",
+                    confidence: "medium"
+                  }
+                }
+              }
+        }
+      ]
+    }));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("planning/intake/refined-brief.md", "# Intake Brief\n\nAudience is unclear.\n", "utf8");
+      await writeFile(
+        "planning/intake/answers.json",
+        `${JSON.stringify({ answers: [{ question_id: "oq-001", answer: "Maintainers preparing AFK-ready Work Items." }] }, null, 2)}\n`,
+        "utf8"
+      );
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const jsonResult = await runPlannerCli(
+        ["intake", "grill", "--from", "planning/intake/refined-brief.md", "--dry-run", "--json"],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: new FileProjectionWriter(),
+          refinedBriefReader: new FileRefinedBriefReader(),
+          graphOperationProposer: proposer,
+          graphOperationUserAnswerReader: new FileGraphOperationUserAnswerReader()
+        }
+      );
+
+      expect(jsonResult.exitCode).toBe(0);
+      expect(JSON.parse(jsonResult.stdout)).toMatchObject({
+        status: "candidate",
+        dryRun: true,
+        applied: false,
+        proposedOpenQuestions: [
+          {
+            id: "oq-001",
+            question: "Who is the primary audience for the first release?"
+          }
+        ]
+      });
+
+      const answerResult = await runPlannerCli(
+        [
+          "intake",
+          "grill",
+          "--from",
+          "planning/intake/refined-brief.md",
+          "--answers",
+          "planning/intake/answers.json",
+          "--dry-run"
+        ],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: new FileProjectionWriter(),
+          refinedBriefReader: new FileRefinedBriefReader(),
+          graphOperationProposer: proposer,
+          graphOperationUserAnswerReader: new FileGraphOperationUserAnswerReader()
+        }
+      );
+
+      expect(answerResult.exitCode).toBe(0);
+      expect(answerResult.stdout).toContain("grilling_session: dry-run");
+      expect(answerResult.stdout).toContain("AddDecision: approval_required=true category=commitment_changing");
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readdir("planning/work-items")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });

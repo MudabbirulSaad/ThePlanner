@@ -8,6 +8,7 @@ import {
   exportProjectionsUseCase,
   graphOperationApplyUseCase,
   graphOperationDryRunUseCase,
+  grillingSessionDryRunUseCase,
   initWorkspaceUseCase,
   intakeQuestionsUseCase,
   decideAgentRunUseCase,
@@ -29,6 +30,8 @@ import type {
   AgentRunArtifactWriter,
   ChangeLogWriter,
   GraphOperationProposalReader,
+  GraphOperationProposer,
+  GraphOperationUserAnswerReader,
   GraphRepository,
   IntakeIdeaReader,
   JsonSchemaValidator,
@@ -55,6 +58,8 @@ export interface PlannerCliServices {
   readonly refinedBriefReader?: RefinedBriefReader;
   readonly refinedBriefWriter?: RefinedBriefWriter;
   readonly graphOperationProposalReader?: GraphOperationProposalReader;
+  readonly graphOperationProposer?: GraphOperationProposer;
+  readonly graphOperationUserAnswerReader?: GraphOperationUserAnswerReader;
   readonly contextFileReader?: ContextFileReader;
   readonly runArtifactReader?: AgentRunArtifactReader;
   readonly runArtifactWriter?: AgentRunArtifactWriter;
@@ -184,7 +189,44 @@ export async function runPlannerCli(
       }
     }
 
-    return fail("theplanner intake requires the questions or refine subcommand", json);
+    if (rest[0] === "grill") {
+      if (!rest.includes("--dry-run") || rest.includes("--apply")) {
+        return fail("theplanner intake grill requires --dry-run", json);
+      }
+
+      if (!services.refinedBriefReader) {
+        return fail("theplanner intake grill requires a refined brief reader", json);
+      }
+
+      if (!services.graphOperationProposer) {
+        return fail("theplanner intake grill requires a graph operation proposer", json);
+      }
+
+      const from = readOption(rest, "--from");
+      if (!from) {
+        return fail("theplanner intake grill requires --from <file>", json);
+      }
+
+      const answers = readOption(rest, "--answers");
+      if (answers && !services.graphOperationUserAnswerReader) {
+        return fail("theplanner intake grill --answers requires a user answer reader", json);
+      }
+
+      try {
+        const result = await grillingSessionDryRunUseCase({
+          graphRepository: services.graphRepository,
+          refinedBriefReader: services.refinedBriefReader,
+          proposer: services.graphOperationProposer,
+          fromPath: from,
+          ...(answers ? { userAnswerReader: services.graphOperationUserAnswerReader, answersPath: answers } : {})
+        });
+        return render(result.status === "rejected" ? 1 : 0, result, json);
+      } catch (error) {
+        return renderError(error, json);
+      }
+    }
+
+    return fail("theplanner intake requires the questions, refine, or grill subcommand", json);
   }
 
   if (command === "plan") {
@@ -575,6 +617,14 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
     };
   }
 
+  if (isGrillingSessionResult(value)) {
+    return {
+      exitCode,
+      stdout: renderGrillingSession(value),
+      stderr: ""
+    };
+  }
+
   return {
     exitCode,
     stdout: `${JSON.stringify(value)}\n`,
@@ -672,6 +722,43 @@ function isAgentContextBundleResult(value: unknown): value is {
   );
 }
 
+function isGrillingSessionResult(value: unknown): value is {
+  readonly status: string;
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly sourcePath: string;
+  readonly answersPath?: string;
+  readonly proposalCount: number;
+  readonly proposedOpenQuestions: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly question: string;
+    readonly priority: string;
+    readonly blocksExecution: boolean;
+  }[];
+  readonly proposedOperations: readonly {
+    readonly operation: string;
+    readonly approvalRequired: boolean;
+    readonly approvalCategory: string;
+  }[];
+  readonly message: string;
+} {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "dryRun" in value &&
+      value.dryRun === true &&
+      "applied" in value &&
+      value.applied === false &&
+      "sourcePath" in value &&
+      "proposalCount" in value &&
+      "proposedOpenQuestions" in value &&
+      Array.isArray(value.proposedOpenQuestions) &&
+      "proposedOperations" in value &&
+      Array.isArray(value.proposedOperations)
+  );
+}
+
 function renderIntakeQuestions(value: RenderableIntakeQuestionResult): string {
   return [
     "# Intake Grilling Questions",
@@ -690,5 +777,54 @@ function renderIntakeQuestions(value: RenderableIntakeQuestionResult): string {
       ...group.questions.map((question) => `- ${question.question}`),
       ""
     ])
+  ].join("\n");
+}
+
+function renderGrillingSession(value: {
+  readonly status: string;
+  readonly sourcePath: string;
+  readonly answersPath?: string;
+  readonly proposalCount: number;
+  readonly proposedOpenQuestions: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly question: string;
+    readonly priority: string;
+    readonly blocksExecution: boolean;
+  }[];
+  readonly proposedOperations: readonly {
+    readonly operation: string;
+    readonly approvalRequired: boolean;
+    readonly approvalCategory: string;
+  }[];
+  readonly message: string;
+}): string {
+  const openQuestions =
+    value.proposedOpenQuestions.length === 0
+      ? ["- None"]
+      : value.proposedOpenQuestions.map(
+          (question) =>
+            `- ${question.id} [${question.priority}${question.blocksExecution ? ", blocks execution" : ""}]: ${question.question}`
+        );
+  const operations =
+    value.proposedOperations.length === 0
+      ? ["- None"]
+      : value.proposedOperations.map(
+          (operation) =>
+            `- ${operation.operation}: approval_required=${operation.approvalRequired} category=${operation.approvalCategory}`
+        );
+
+  return [
+    "grilling_session: dry-run",
+    `status: ${value.status}`,
+    `source: ${value.sourcePath}`,
+    ...(value.answersPath ? [`answers: ${value.answersPath}`] : []),
+    `proposals: ${value.proposalCount}`,
+    "proposed_open_questions:",
+    ...openQuestions,
+    "proposed_operations:",
+    ...operations,
+    value.message,
+    ""
   ].join("\n");
 }

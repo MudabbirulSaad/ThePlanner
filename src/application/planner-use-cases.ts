@@ -130,6 +130,10 @@ export interface GraphOperationProposalReader {
   readonly readJson: (path: string) => Promise<unknown>;
 }
 
+export interface GraphOperationUserAnswerReader {
+  readonly readJson: (path: string) => Promise<unknown>;
+}
+
 interface ParsedGraphOperationProposal {
   readonly operation: ProposedGraphOperation;
   readonly approved: boolean;
@@ -163,6 +167,21 @@ export interface GraphOperationProposerResult {
 
 export interface GraphOperationProposer {
   readonly propose: (input: GraphOperationProposerInput) => Promise<GraphOperationProposerResult> | GraphOperationProposerResult;
+}
+
+export interface GraphOperationProposalSummary {
+  readonly sourcePath: string;
+  readonly operation: string;
+  readonly approvalRequired: boolean;
+  readonly approvalCategory: string;
+  readonly affectedNodeIds: readonly string[];
+  readonly openQuestion?: {
+    readonly id: string;
+    readonly title: string;
+    readonly question: string;
+    readonly priority: string;
+    readonly blocksExecution: boolean;
+  };
 }
 
 export type RefinedBriefWriteStatus = "created" | "overwritten" | "skipped";
@@ -871,6 +890,7 @@ export async function proposeGraphOperationsUseCase(args: {
   readonly proposalCount: number;
   readonly graphVersionBefore: number;
   readonly graphVersionAfter: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
   readonly results: readonly GraphOperationDryRunResult[];
   readonly candidateGraph?: unknown;
   readonly validation: GraphValidationResult;
@@ -883,6 +903,7 @@ export async function proposeGraphOperationsUseCase(args: {
     ...(args.userAnswers ? { userAnswers: deepCloneApplicationValue(args.userAnswers) } : {})
   });
   const results: GraphOperationDryRunResult[] = [];
+  const proposedOperations: GraphOperationProposalSummary[] = [];
   let candidateGraph = deepCloneApplicationValue(graph);
 
   for (const [index, proposal] of proposerResult.proposals.entries()) {
@@ -905,6 +926,7 @@ export async function proposeGraphOperationsUseCase(args: {
         proposalCount: proposerResult.proposals.length,
         graphVersionBefore: graph.graphVersion,
         graphVersionAfter: candidateGraph.graphVersion,
+        proposedOperations,
         results,
         validation: validatePlanningGraph(candidateGraph),
         message: "At least one proposed Graph Operation was rejected. No planning files were written."
@@ -916,6 +938,7 @@ export async function proposeGraphOperationsUseCase(args: {
       sourcePath
     });
     results.push(result);
+    proposedOperations.push(summarizeProposedOperation(sourcePath, parsedOperation, result));
 
     if (result.status === "rejected") {
       return {
@@ -925,6 +948,7 @@ export async function proposeGraphOperationsUseCase(args: {
         proposalCount: proposerResult.proposals.length,
         graphVersionBefore: graph.graphVersion,
         graphVersionAfter: candidateGraph.graphVersion,
+        proposedOperations,
         results,
         validation: validatePlanningGraph(candidateGraph),
         message: "At least one proposed Graph Operation was rejected. No planning files were written."
@@ -941,10 +965,66 @@ export async function proposeGraphOperationsUseCase(args: {
     proposalCount: proposerResult.proposals.length,
     graphVersionBefore: graph.graphVersion,
     graphVersionAfter: candidateGraph.graphVersion,
+    proposedOperations,
     results,
     candidateGraph: serializePlanningGraphJson(candidateGraph),
     validation: validatePlanningGraph(candidateGraph),
     message: "Dry run only. Proposed Graph Operations were applied to a validated candidate graph; no planning files were written."
+  };
+}
+
+export async function grillingSessionDryRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly refinedBriefReader: RefinedBriefReader;
+  readonly proposer: GraphOperationProposer;
+  readonly fromPath: string;
+  readonly userAnswerReader?: GraphOperationUserAnswerReader;
+  readonly answersPath?: string;
+}): Promise<{
+  readonly status: "candidate" | "rejected";
+  readonly dryRun: true;
+  readonly applied: false;
+  readonly sourcePath: string;
+  readonly answersPath?: string;
+  readonly proposalCount: number;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly proposedOpenQuestions: readonly NonNullable<GraphOperationProposalSummary["openQuestion"]>[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly candidateGraph?: unknown;
+  readonly validation: GraphValidationResult;
+  readonly message: string;
+}> {
+  if (args.answersPath && !args.userAnswerReader) {
+    throw new Error("Grilling session answers require a user answer reader.");
+  }
+
+  const intakeBrief = {
+    sourcePath: args.fromPath,
+    content: await args.refinedBriefReader.read(args.fromPath)
+  };
+  const userAnswers = args.answersPath
+    ? parseGraphOperationUserAnswers(await args.userAnswerReader!.readJson(args.answersPath), args.answersPath)
+    : undefined;
+  const result = await proposeGraphOperationsUseCase({
+    graphRepository: args.graphRepository,
+    proposer: args.proposer,
+    intakeBrief,
+    ...(userAnswers ? { userAnswers } : {})
+  });
+
+  return {
+    ...result,
+    sourcePath: args.fromPath,
+    ...(args.answersPath ? { answersPath: args.answersPath } : {}),
+    proposedOpenQuestions: result.proposedOperations.flatMap((operation) =>
+      operation.openQuestion ? [operation.openQuestion] : []
+    ),
+    message:
+      result.status === "candidate"
+        ? "Dry run only. Grilling proposals were applied to a validated candidate graph; no planning files were written."
+        : result.message
   };
 }
 
@@ -973,6 +1053,31 @@ function rejectedGraphOperationParseResult(args: {
     ],
     validation: validatePlanningGraph(args.graph),
     message: "Proposed Graph Operation could not be parsed. No planning files were written."
+  };
+}
+
+function summarizeProposedOperation(
+  sourcePath: string,
+  operation: ProposedGraphOperation,
+  result: GraphOperationDryRunResult
+): GraphOperationProposalSummary {
+  return {
+    sourcePath,
+    operation: operation.kind,
+    approvalRequired: result.approvalRequired,
+    approvalCategory: result.approvalCategory,
+    affectedNodeIds: result.affectedNodeIds,
+    ...(operation.kind === "AddOpenQuestion"
+      ? {
+          openQuestion: {
+            id: operation.openQuestion.id,
+            title: operation.openQuestion.title,
+            question: operation.openQuestion.question,
+            priority: operation.openQuestion.priority,
+            blocksExecution: operation.openQuestion.blocksExecution
+          }
+        }
+      : {})
   };
 }
 
@@ -1743,6 +1848,28 @@ function parseGraphOperationProposal(value: unknown): ParsedGraphOperationPropos
   };
 }
 
+function parseGraphOperationUserAnswers(value: unknown, sourcePath: string): readonly GraphOperationUserAnswerInput[] {
+  const rawAnswers = Array.isArray(value)
+    ? value
+    : readArray(parseJsonObjectProperty(value, "Graph Operation user answers").answers, "answers");
+
+  return rawAnswers.map((rawAnswer, index) => {
+    const answer = parseJsonObjectProperty(rawAnswer, `answers[${index}]`);
+    const questionId = readOptionalString(answer.question_id ?? answer.questionId, `answers[${index}].question_id`);
+    const question = readOptionalString(answer.question, `answers[${index}].question`);
+    const sourceReference =
+      readOptionalString(answer.source_reference ?? answer.sourceReference, `answers[${index}].source_reference`) ??
+      `${sourcePath}#answer-${index + 1}`;
+
+    return {
+      ...(questionId ? { questionId } : {}),
+      ...(question ? { question } : {}),
+      answer: readString(answer.answer, `answers[${index}].answer`),
+      sourceReference
+    };
+  });
+}
+
 function parseProposedGraphOperationJson(value: unknown): ProposedGraphOperation {
   const operation = parseJsonObjectProperty(value, "Proposed Graph Operation");
   const operationName = readString(operation.operation ?? operation.kind, "operation");
@@ -2039,6 +2166,14 @@ function readString(value: unknown, path: string): string {
   }
 
   return value;
+}
+
+function readOptionalString(value: unknown, path: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  return readString(value, path);
 }
 
 function readInteger(value: unknown, path: string): number {

@@ -9,6 +9,7 @@ import type {
   ChangeLogWriter,
   ContextFileReader,
   GraphOperationProposalReader,
+  GraphOperationUserAnswerReader,
   GraphRepository,
   IntakeIdeaReader,
   PlanningChangeLogEvent,
@@ -189,6 +190,19 @@ export class FileGraphOperationProposalReader implements GraphOperationProposalR
         throw new Error(`Graph Operation proposal file not found: ${path}`);
       }
       throw new Error(`Graph Operation proposal file is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
+export class FileGraphOperationUserAnswerReader implements GraphOperationUserAnswerReader {
+  public async readJson(path: string): Promise<unknown> {
+    try {
+      return JSON.parse(await readFile(resolve(path), "utf8"));
+    } catch (error) {
+      if (isNotFound(error)) {
+        throw new Error(`Graph Operation user answers file not found: ${path}`);
+      }
+      throw new Error(`Graph Operation user answers file is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

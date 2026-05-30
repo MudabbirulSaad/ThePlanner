@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  grillingSessionDryRunUseCase,
   parsePlanningGraphJson,
   proposeGraphOperationsUseCase
 } from "../../src/application/index.js";
@@ -38,6 +39,157 @@ class DeterministicFakeProposer implements GraphOperationProposer {
 }
 
 describe("graph operation proposer use case", () => {
+  it("runs a grilling dry-run from an Intake Brief and returns proposed Open Questions", async () => {
+    let saveCalled = false;
+    const proposer = new DeterministicFakeProposer((input) => {
+      expect(input.intakeBrief).toMatchObject({
+        sourcePath: "planning/intake/refined-brief.md",
+        content: "# Intake Brief\n\nTarget users are unclear."
+      });
+
+      return {
+        proposals: [
+          {
+            sourceReference: "planning/intake/refined-brief.md#target-users",
+            operation: {
+              operation: "add_open_question",
+              open_question: {
+                id: "oq-001",
+                title: "Target users",
+                question: "Which user role should the first release optimize for?",
+                priority: "high",
+                blocks_execution: true,
+                provenance: {
+                  source_type: "planner_inference",
+                  source_reference: "planning/intake/refined-brief.md#target-users",
+                  created_by: "deterministic fake proposer",
+                  confidence: "medium"
+                }
+              }
+            }
+          }
+        ]
+      };
+    });
+
+    const result = await grillingSessionDryRunUseCase({
+      graphRepository: {
+        load: async () => emptyGraph,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      refinedBriefReader: {
+        read: async () => "# Intake Brief\n\nTarget users are unclear."
+      },
+      proposer,
+      fromPath: "planning/intake/refined-brief.md"
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      dryRun: true,
+      applied: false,
+      sourcePath: "planning/intake/refined-brief.md",
+      proposalCount: 1,
+      proposedOpenQuestions: [
+        {
+          id: "oq-001",
+          title: "Target users",
+          question: "Which user role should the first release optimize for?",
+          priority: "high",
+          blocksExecution: true
+        }
+      ],
+      validation: { status: "pass" }
+    });
+    expect(saveCalled).toBe(false);
+  });
+
+  it("feeds answer files into grilling follow-up proposals and marks accepted Decisions approval-required", async () => {
+    const proposer = new DeterministicFakeProposer((input) => {
+      expect(input.userAnswers).toEqual([
+        {
+          questionId: "oq-001",
+          question: "Which user role should the first release optimize for?",
+          answer: "Maintainers preparing AFK-ready Work Items.",
+          sourceReference: "planning/intake/answers.json#answer-1"
+        }
+      ]);
+
+      return {
+        proposals: [
+          {
+            sourceReference: input.userAnswers?.[0]?.sourceReference,
+            operation: {
+              operation: "add_decision",
+              decision: {
+                id: "dec-001",
+                title: "Primary user",
+                status: "accepted",
+                selected_option: "Maintainers preparing AFK-ready Work Items",
+                rationale: "The user answer explicitly names maintainers as the first-release audience.",
+                rejected_alternatives: ["General project managers"],
+                unresolved_questions: [],
+                provenance: {
+                  source_type: "user_answer",
+                  source_reference: input.userAnswers?.[0]?.sourceReference,
+                  created_by: "deterministic fake proposer",
+                  confidence: "high"
+                }
+              },
+              approval_classification: {
+                category: "commitment_changing",
+                rationale: "Accepted decisions from grilling answers change planning commitments."
+              }
+            }
+          }
+        ]
+      };
+    });
+
+    const result = await grillingSessionDryRunUseCase({
+      graphRepository: { load: async () => emptyGraph },
+      refinedBriefReader: { read: async () => "# Intake Brief" },
+      userAnswerReader: {
+        readJson: async () => ({
+          answers: [
+            {
+              question_id: "oq-001",
+              question: "Which user role should the first release optimize for?",
+              answer: "Maintainers preparing AFK-ready Work Items."
+            }
+          ]
+        })
+      },
+      proposer,
+      fromPath: "planning/intake/refined-brief.md",
+      answersPath: "planning/intake/answers.json"
+    });
+
+    expect(result).toMatchObject({
+      status: "candidate",
+      answersPath: "planning/intake/answers.json",
+      proposedOperations: [
+        {
+          sourcePath: "planning/intake/answers.json#answer-1",
+          operation: "AddDecision",
+          approvalRequired: true,
+          approvalCategory: "commitment_changing",
+          affectedNodeIds: ["dec-001"]
+        }
+      ],
+      results: [
+        {
+          operation: "AddDecision",
+          approvalRequired: true,
+          approvalCategory: "commitment_changing"
+        }
+      ],
+      validation: { status: "pass" }
+    });
+  });
+
   it("requests fake proposer output from user-answer input and validates candidate operations", async () => {
     const proposer = new DeterministicFakeProposer((input) => {
       const answer = input.userAnswers?.[0]?.answer ?? "Unknown deployment target";
