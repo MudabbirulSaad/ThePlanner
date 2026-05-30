@@ -141,6 +141,20 @@ describe("graph validation and readiness", () => {
     expect(codes).toContain("work_item_dependency_cycle");
   });
 
+  it("requires active HITL Gates to include a required action, blocked Work Items, and a cause link", () => {
+    const raw = cloneGraph();
+    raw.nodes.hitl_gates[0].status = "active";
+    raw.nodes.hitl_gates[0].required_action = "";
+    raw.nodes.hitl_gates[0].blocks = [];
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+    const codes = result.semanticErrors.map((error) => error.code);
+
+    expect(codes).toContain("hitl_gate_missing_required_action");
+    expect(codes).toContain("hitl_gate_missing_blocked_work_items");
+    expect(codes).toContain("hitl_gate_missing_cause_link");
+  });
+
   it("rejects Document Projection paths outside the workspace", () => {
     const raw = cloneGraph();
     raw.nodes.document_projections[0].path = "../outside.md";

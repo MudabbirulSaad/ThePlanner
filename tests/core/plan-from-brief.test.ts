@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { proposePlanningGraphFromBrief, validatePlanningGraph } from "../../src/core/index.js";
+import { proposePlanningGraphFromBrief, renderAllProjections, validatePlanningGraph } from "../../src/core/index.js";
 
 describe("plan from refined brief proposal", () => {
   it("creates a deterministic valid graph proposal from a refined brief", () => {
@@ -143,8 +143,73 @@ describe("plan from refined brief proposal", () => {
     );
     expect(validatePlanningGraph(proposal.graph).readinessSnapshots["wi-001"]?.labels).toEqual([
       "agent_eligible",
+      "hitl_gated",
       "blocked"
     ]);
+  });
+
+  it("derives HITL Gates from blocking assumptions, risks, decisions, and open questions", () => {
+    const proposal = proposePlanningGraphFromBrief({
+      sourcePath: "brief.md",
+      content: [
+        "# Refined Brief",
+        "",
+        "## Product Summary",
+        "",
+        "Build a planning assistant for migration work.",
+        "",
+        "## MVP Scope",
+        "",
+        "Generate Work Items for the first migration slice.",
+        "",
+        "## Success Criteria",
+        "",
+        "Generated Work Items explain blockers before agent execution.",
+        "",
+        "## Assumptions",
+        "",
+        "- Assumption: The production schema is final. Confidence: low. Impact if wrong: Work targets the wrong tables. Blocks AFK.",
+        "",
+        "## Constraints",
+        "",
+        "- Risk: high impact data migration rollback may be unavailable and blocks execution.",
+        "",
+        "## Decisions",
+        "",
+        "- Proposed: Use batch migration. Rationale: Cheapest path. Questions: What maintenance window is allowed?",
+        "",
+        "## Open Questions",
+        "",
+        "- Which production freeze window must be decided before execution?"
+      ].join("\n")
+    });
+
+    const validation = validatePlanningGraph(proposal.graph);
+    const hitlGates = proposal.graph.nodes.filter((node) => node.kind === "hitl_gate");
+
+    expect(validation.status).toBe("pass");
+    expect(hitlGates).toEqual([
+      expect.objectContaining({ id: "hitl-001", title: "Resolve blocking Assumption asm-001" }),
+      expect.objectContaining({ id: "hitl-002", title: "Resolve high-impact Risk risk-001" }),
+      expect.objectContaining({ id: "hitl-003", title: "Accept unresolved Decision dec-001" }),
+      expect.objectContaining({ id: "hitl-004", title: "Answer execution-blocking Open Question oq-001" })
+    ]);
+    expect(
+      proposal.graph.edges.filter((edge) => edge.source.startsWith("hitl-") && edge.type === "references").map((edge) => edge.target)
+    ).toEqual(["asm-001", "risk-001", "dec-001", "oq-001"]);
+    expect(validation.readinessSnapshots["wi-001"]?.labels).toEqual([
+      "agent_eligible",
+      "hitl_gated",
+      "blocked"
+    ]);
+    expect(validation.readinessSnapshots["wi-001"]?.reasons).toContain("Blocked by unresolved HITL Gate hitl-001.");
+
+    const renderedWorkItem = renderAllProjections(proposal.graph).find((projection) =>
+      projection.path.includes("wi-001-")
+    );
+    expect(renderedWorkItem?.content).toContain("hitl_gates: [hitl-001, hitl-002, hitl-003, hitl-004]");
+    expect(renderedWorkItem?.content).toContain("## HITL Gates");
+    expect(renderedWorkItem?.content).toContain("Required action: Confirm or revise Assumption asm-001");
   });
 
   it("rejects an empty refined brief", () => {

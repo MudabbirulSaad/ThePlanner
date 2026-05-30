@@ -1,11 +1,14 @@
 import type {
+  AssumptionNode,
   ComponentNode,
   DecisionNode,
   DependencyEdge,
   DocumentProjectionNode,
   ExecutionSliceNode,
+  HitlGateNode,
   OpenQuestionNode,
   PlanningGraph,
+  PlanningNodeId,
   ProductIntent,
   Provenance,
   RequirementNode,
@@ -32,6 +35,7 @@ type BriefSectionKey =
   | "non_goals"
   | "constraints"
   | "success_criteria"
+  | "assumptions"
   | "decisions"
   | "open_questions"
   | "raw_idea";
@@ -47,6 +51,8 @@ const sectionKeys: Readonly<Record<string, BriefSectionKey>> = {
   "non goals": "non_goals",
   constraints: "constraints",
   "success criteria": "success_criteria",
+  assumptions: "assumptions",
+  "key assumptions": "assumptions",
   decisions: "decisions",
   "decision log": "decisions",
   "architecture decisions": "decisions",
@@ -72,14 +78,16 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
 
   const productIntent = buildProductIntent(sections, provenance, scaffoldedFields);
   const requirements = buildRequirements(sections, provenance, scaffoldedFields);
+  const assumptions = buildAssumptions(sections, provenance, scaffoldedFields);
   const decisions = buildDecisions(sections, provenance, scaffoldedFields);
   const openQuestions = buildOpenQuestions(sections, provenance, scaffoldedFields);
   const risks = buildRisks(sections, provenance, scaffoldedFields);
   const components = buildComponents(sections, scaffoldedFields);
   const workItems = buildWorkItems(requirements, components.length > 0, scaffoldedFields);
+  const hitlGates = buildHitlGates(assumptions, risks, decisions, openQuestions, workItems, provenance);
   const documents = buildDocumentProjections();
   const slices = buildExecutionSlices(workItems);
-  const edges = buildEdges(requirements, decisions, risks, components, workItems, documents);
+  const edges = buildEdges(requirements, assumptions, decisions, risks, openQuestions, hitlGates, components, workItems, documents);
 
   return {
     graph: {
@@ -87,7 +95,18 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
       graphVersion: graphVersion(1),
       source: sourceReference,
       productIntent,
-      nodes: [...requirements, ...decisions, ...openQuestions, ...risks, ...components, ...workItems, ...documents, ...slices],
+      nodes: [
+        ...requirements,
+        ...decisions,
+        ...assumptions,
+        ...risks,
+        ...openQuestions,
+        ...hitlGates,
+        ...components,
+        ...workItems,
+        ...documents,
+        ...slices
+      ],
       edges
     },
     scaffoldedFields
@@ -103,6 +122,7 @@ function parseBriefSections(content: string): BriefSections {
     non_goals: [],
     constraints: [],
     success_criteria: [],
+    assumptions: [],
     decisions: [],
     open_questions: [],
     raw_idea: []
@@ -123,6 +143,33 @@ function parseBriefSections(content: string): BriefSections {
   }
 
   return buckets;
+}
+
+function buildAssumptions(
+  sections: BriefSections,
+  provenance: Provenance,
+  scaffoldedFields: string[]
+): readonly AssumptionNode[] {
+  const assumptionLines = sections.assumptions.length > 0
+    ? sections.assumptions
+    : sections.constraints.filter((line) => /\b(assum|depends on|dependency|unknown|uncertain)\b/iu.test(line));
+  const source = takeStable(assumptionLines, 3);
+
+  if (source.length === 0) {
+    scaffoldedFields.push("Assumptions omitted because no explicit assumption language was present.");
+  }
+
+  return source.map((line, index) => ({
+    id: stableId(`asm-${String(index + 1).padStart(3, "0")}`, "asm"),
+    kind: "assumption",
+    title: titleFrom(cleanAssumptionStatement(line), `Assumption ${index + 1}`),
+    status: "active",
+    statement: cleanAssumptionStatement(line),
+    confidence: confidenceFromLine(line),
+    impactIfWrong: impactIfWrongFromLine(line),
+    blocksAfk: uncertaintyBlocksExecution(line),
+    provenance
+  }));
 }
 
 function buildProductIntent(
@@ -379,8 +426,8 @@ function buildOpenQuestions(
     title: titleFrom(question, `Open question ${index + 1}`),
     status: "active",
     question: ensureQuestion(question),
-    priority: index === 0 ? "medium" : "low",
-    blocksExecution: false,
+    priority: uncertaintyBlocksExecution(question) ? "high" : index === 0 ? "medium" : "low",
+    blocksExecution: uncertaintyBlocksExecution(question),
     provenance
   }));
 }
@@ -405,13 +452,67 @@ function buildRisks(
       kind: "risk",
       title: titleFrom(risk, `Risk ${index + 1}`),
       status: "active",
-      likelihood: "medium",
-      impact: index === 0 ? "medium" : "low",
+      likelihood: likelihoodFromLine(risk),
+      impact: impactFromLine(risk, index),
       mitigation: "Review the dry-run graph before applying it and refine the brief if the proposal is too coarse.",
-      blocksAfk: false,
+      blocksAfk: riskBlocksAfk(risk, index),
       provenance
     })
   );
+}
+
+function buildHitlGates(
+  assumptions: readonly AssumptionNode[],
+  risks: readonly RiskNode[],
+  decisions: readonly DecisionNode[],
+  openQuestions: readonly OpenQuestionNode[],
+  workItems: readonly WorkItemNode[],
+  provenance: Provenance
+): readonly HitlGateNode[] {
+  const affectedWorkItems = workItems.map((workItem) => workItem.id);
+  const sources: { readonly id: PlanningNodeId; readonly title: string; readonly requiredAction: string }[] = [
+    ...assumptions
+      .filter((assumption) => assumption.blocksAfk)
+      .map((assumption) => ({
+        id: assumption.id,
+        title: `Resolve blocking Assumption ${assumption.id}`,
+        requiredAction: `Confirm or revise Assumption ${assumption.id}: ${trimSentence(assumption.statement)}.`
+      })),
+    ...risks
+      .filter((risk) => risk.blocksAfk)
+      .map((risk) => ({
+        id: risk.id,
+        title: `Resolve high-impact Risk ${risk.id}`,
+        requiredAction: `Choose a mitigation or accept the execution risk for Risk ${risk.id}: ${trimSentence(risk.title)}.`
+      })),
+    ...decisions
+      .filter((decision) => decision.status === "proposed" || decision.status === "revisit")
+      .map((decision) => ({
+        id: decision.id,
+        title: `Accept unresolved Decision ${decision.id}`,
+        requiredAction: `Accept, reject, or revise Decision ${decision.id}: ${trimSentence(decision.selectedOption)}.`
+      })),
+    ...openQuestions
+      .filter((question) => question.blocksExecution)
+      .map((question) => ({
+        id: question.id,
+        title: `Answer execution-blocking Open Question ${question.id}`,
+        requiredAction: `Answer Open Question ${question.id}: ${trimSentence(question.question)}.`
+      }))
+  ];
+
+  return sources.map((source, index) => ({
+    id: stableId(`hitl-${String(index + 1).padStart(3, "0")}`, "hitl"),
+    kind: "hitl_gate",
+    title: source.title,
+    status: "active",
+    requiredAction: source.requiredAction,
+    blocks: affectedWorkItems,
+    provenance: {
+      ...provenance,
+      sourceReference: `${provenance.sourceReference}#${source.id}`
+    }
+  }));
 }
 
 function buildComponents(sections: BriefSections, scaffoldedFields: string[]): readonly ComponentNode[] {
@@ -617,8 +718,11 @@ function buildExecutionSlices(workItems: readonly WorkItemNode[]): readonly Exec
 
 function buildEdges(
   requirements: readonly RequirementNode[],
+  assumptions: readonly AssumptionNode[],
   decisions: readonly DecisionNode[],
   risks: readonly RiskNode[],
+  openQuestions: readonly OpenQuestionNode[],
+  hitlGates: readonly HitlGateNode[],
   components: readonly ComponentNode[],
   workItems: readonly WorkItemNode[],
   documents: readonly DocumentProjectionNode[]
@@ -656,6 +760,17 @@ function buildEdges(
     }
   }
 
+  for (const assumption of assumptions.filter((node) => node.blocksAfk)) {
+    for (const workItem of workItems) {
+      edges.push({
+        source: workItem.id,
+        target: assumption.id,
+        type: "depends_on",
+        rationale: `Blocking Assumption ${assumption.id} must be confirmed before AFK execution.`
+      });
+    }
+  }
+
   for (const risk of risks) {
     edges.push({
       source: workItems[2]?.id ?? workItems[0].id,
@@ -663,6 +778,49 @@ function buildEdges(
       type: "mitigates",
       rationale: "Review and validation mitigate dry-run planning risks."
     });
+
+    if (risk.blocksAfk) {
+      for (const workItem of workItems) {
+        edges.push({
+          source: workItem.id,
+          target: risk.id,
+          type: "depends_on",
+          rationale: `High-impact Risk ${risk.id} must be resolved before AFK execution.`
+        });
+      }
+    }
+  }
+
+  for (const question of openQuestions.filter((node) => node.blocksExecution)) {
+    for (const workItem of workItems) {
+      edges.push({
+        source: workItem.id,
+        target: question.id,
+        type: "depends_on",
+        rationale: `Open Question ${question.id} blocks safe execution.`
+      });
+    }
+  }
+
+  for (const hitlGate of hitlGates) {
+    const causeId = hitlGate.provenance?.sourceReference.split("#").at(-1);
+    for (const workItemId of hitlGate.blocks) {
+      edges.push({
+        source: hitlGate.id,
+        target: workItemId,
+        type: "blocks",
+        rationale: `${hitlGate.id} blocks ${workItemId}: ${hitlGate.requiredAction}`
+      });
+    }
+
+    if (causeId) {
+      edges.push({
+        source: hitlGate.id,
+        target: causeId as PlanningNodeId,
+        type: "references",
+        rationale: `HITL Gate ${hitlGate.id} was derived from blocking uncertainty ${causeId}.`
+      });
+    }
   }
 
   for (const component of components) {
@@ -684,6 +842,61 @@ function buildEdges(
   }
 
   return edges;
+}
+
+function confidenceFromLine(line: string): AssumptionNode["confidence"] {
+  if (/\blow confidence\b|\bconfidence:\s*low\b/iu.test(line)) {
+    return "low";
+  }
+
+  if (/\bhigh confidence\b|\bconfidence:\s*high\b/iu.test(line)) {
+    return "high";
+  }
+
+  return "medium";
+}
+
+function impactFromLine(line: string, index: number): RiskNode["impact"] {
+  if (/\bhigh impact\b|\bimpact:\s*high\b|\bcritical\b|\bsevere\b/iu.test(line)) {
+    return "high";
+  }
+
+  if (/\blow impact\b|\bimpact:\s*low\b/iu.test(line)) {
+    return "low";
+  }
+
+  return index === 0 ? "medium" : "low";
+}
+
+function likelihoodFromLine(line: string): RiskNode["likelihood"] {
+  if (/\bhigh likelihood\b|\blikelihood:\s*high\b/iu.test(line)) {
+    return "high";
+  }
+
+  if (/\blow likelihood\b|\blikelihood:\s*low\b/iu.test(line)) {
+    return "low";
+  }
+
+  return "medium";
+}
+
+function riskBlocksAfk(line: string, index: number): boolean {
+  return uncertaintyBlocksExecution(line) || impactFromLine(line, index) === "high";
+}
+
+function uncertaintyBlocksExecution(line: string): boolean {
+  return /\b(blocks? (?:afk|execution|implementation|safe progress)|execution-blocking|blocking|must (?:be )?(?:confirmed|resolved|decided|answered|confirm|resolve|decide|answer)|requires? human|human approval|approval required)\b/iu.test(line);
+}
+
+function cleanAssumptionStatement(line: string): string {
+  return line
+    .replace(/^\s*(assumption|assume)\s*:\s*/iu, "")
+    .replace(/\s+\b(confidence|impact if wrong|impact|blocks afk|blocks execution)\s*:.+$/iu, "")
+    .trim();
+}
+
+function impactIfWrongFromLine(line: string): string {
+  return extractDecisionField(line, ["impact if wrong", "impact"]) ?? "AFK execution may proceed with incorrect planning context.";
 }
 
 function normalizeBriefLine(line: string): string {
@@ -728,4 +941,8 @@ function titleFrom(statement: string, fallback: string): string {
 
 function ensureQuestion(value: string): string {
   return value.endsWith("?") ? value : `${value}?`;
+}
+
+function trimSentence(value: string): string {
+  return value.replace(/[.!?]+$/u, "");
 }

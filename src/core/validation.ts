@@ -192,6 +192,45 @@ export function validatePlanningGraph(graph: PlanningGraph): GraphValidationResu
     }
   }
 
+  for (const hitlGate of graph.nodes.filter(isHitlGate)) {
+    if (!hitlGate.requiredAction.trim()) {
+      semanticErrors.push({
+        code: "hitl_gate_missing_required_action",
+        message: `HITL Gate must explain the required human action: ${hitlGate.id}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    if (hitlGate.blocks.length === 0 && hitlGate.status !== "accepted" && hitlGate.status !== "resolved") {
+      semanticErrors.push({
+        code: "hitl_gate_missing_blocked_work_items",
+        message: `Active HITL Gate must block at least one Work Item: ${hitlGate.id}`,
+        nodeId: hitlGate.id
+      });
+    }
+
+    for (const workItemId of hitlGate.blocks) {
+      if (!isWorkItem(nodeById.get(workItemId))) {
+        semanticErrors.push({
+          code: "hitl_gate_blocks_missing_work_item",
+          message: `HITL Gate blocks must reference existing Work Items: ${hitlGate.id} blocks ${workItemId}`,
+          nodeId: hitlGate.id
+        });
+      }
+    }
+
+    const hasCauseLink = graph.edges.some(
+      (edge) => edge.source === hitlGate.id && edge.type === "references" && nodeById.has(edge.target)
+    );
+    if (hitlGate.status !== "accepted" && hitlGate.status !== "resolved" && !hasCauseLink) {
+      semanticErrors.push({
+        code: "hitl_gate_missing_cause_link",
+        message: `HITL Gate must reference the uncertainty that caused it: ${hitlGate.id}`,
+        nodeId: hitlGate.id
+      });
+    }
+  }
+
   const readinessSnapshots = Object.fromEntries(
     workItems.map((workItem) => [
       workItem.id,
@@ -310,6 +349,10 @@ function afkBlockers(
 
     if (edge.type === "depends_on" && target.kind === "risk" && target.blocksAfk && !isRiskMitigated(graph, target.id, nodeById)) {
       reasons.push(`Depends on unmitigated high-impact Risk ${target.id}.`);
+    }
+
+    if (edge.type === "depends_on" && target.kind === "open_question" && target.blocksExecution) {
+      reasons.push(`Depends on execution-blocking Open Question ${target.id}.`);
     }
   }
 

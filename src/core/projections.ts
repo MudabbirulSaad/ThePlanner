@@ -4,6 +4,7 @@ import type {
   DecisionNode,
   DependencyEdge,
   DocumentProjectionNode,
+  HitlGateNode,
   OpenQuestionNode,
   PlanningGraph,
   PlanningNode,
@@ -61,6 +62,7 @@ export function renderWorkItemProjection(
     .filter((edge) => edge.type === "depends_on" && edge.target === workItem.id)
     .map((edge) => edge.source);
   const requirements = outgoing(graph, workItem.id, "satisfies").map((edge) => edge.target);
+  const hitlGates = hitlGatesForWorkItem(graph, workItem);
 
   return {
     path: `planning/work-items/${slug(workItem.id, workItem.title)}.md`,
@@ -73,8 +75,8 @@ export function renderWorkItemProjection(
       depends_on: inlineList(dependencies),
       blocks: inlineList(blocks),
       requirements: inlineList(requirements),
-      hitl_gates: "[]"
-    })}\n# ${workItem.title}\n\n## Context\n\n${workItem.title} supports ThePlanner V1 implementation.\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\nKeep implementation inside this Work Item's accepted slice.\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\nNone.\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
+      hitl_gates: inlineList(hitlGates.map((gate) => gate.id))
+  })}\n# ${workItem.title}\n\n## Context\n\n${workItem.title} supports ThePlanner V1 implementation.\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\nKeep implementation inside this Work Item's accepted slice.\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\n${renderWorkItemHitlGates(graph, hitlGates)}\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
   };
 }
 
@@ -213,12 +215,13 @@ ${list(workItems.map((node) => renderArchitectureWorkItemTrace(graph, node)))}
 function renderDependencyView(graph: PlanningGraph, document: DocumentProjectionNode): string {
   const workItems = graph.nodes.filter(isWorkItem);
   const dependencyEdges = graph.edges.filter((edge) => edge.type === "depends_on");
+  const hitlGates = graph.nodes.filter(isHitlGate).sort(compareById);
   return `${frontmatter({
     id: document.id,
     projection_type: document.projectionType,
     graph_version: graph.graphVersion,
     source_graph: "planning/graph.json"
-  })}\n# ${document.title}\n\n## Graph Summary\n\nThe V1 Planning Graph contains ${graph.nodes.length} nodes and ${graph.edges.length} dependency edges.\n\n## Work Item Readiness\n\n${list(workItems.map((workItem) => `${workItem.id}: ${workItem.readinessSnapshot.labels.join(", ")}`))}\n\n## Dependency Edges\n\n${list(dependencyEdges.map((edge) => `${edge.source} depends on ${edge.target}`))}\n`;
+  })}\n# ${document.title}\n\n## Graph Summary\n\nThe V1 Planning Graph contains ${graph.nodes.length} nodes and ${graph.edges.length} dependency edges.\n\n## Work Item Readiness\n\n${list(workItems.map((workItem) => `${workItem.id}: ${workItem.readinessSnapshot.labels.join(", ")}`))}\n\n## HITL Gates\n\n${list(hitlGates.map((gate) => renderHitlGate(graph, gate)))}\n\n## Dependency Edges\n\n${list(dependencyEdges.map((edge) => `${edge.source} depends on ${edge.target}`))}\n`;
 }
 
 function frontmatter(values: Record<string, string | number>): string {
@@ -265,6 +268,23 @@ function renderOpenQuestion(node: OpenQuestionNode): string {
 function renderRisk(node: RiskNode): string {
   const blocker = node.blocksAfk ? "Blocks AFK." : "Does not block AFK.";
   return `${node.id} (${node.likelihood} likelihood, ${node.impact} impact): ${node.title}. Mitigation: ${node.mitigation} ${blocker}`;
+}
+
+function renderHitlGate(graph: PlanningGraph, node: HitlGateNode): string {
+  const causes = outgoing(graph, node.id, "references")
+    .map((edge) => edge.target)
+    .sort();
+  const causeText = causes.length === 0 ? "Cause: none recorded." : `Cause: ${causes.map((id) => `\`${id}\``).join(", ")}.`;
+  const blocksText = node.blocks.length === 0 ? "Blocks: none." : `Blocks: ${node.blocks.map((id) => `\`${id}\``).join(", ")}.`;
+  return `${node.id} (${node.status}): ${node.title}. Required action: ${trimSentence(node.requiredAction)}. ${causeText} ${blocksText}`;
+}
+
+function renderWorkItemHitlGates(graph: PlanningGraph, hitlGates: readonly HitlGateNode[]): string {
+  if (hitlGates.length === 0) {
+    return "None.";
+  }
+
+  return hitlGates.map((gate) => `- ${renderHitlGate(graph, gate)}`).join("\n");
 }
 
 function renderDecision(graph: PlanningGraph, node: DecisionNode): string {
@@ -402,6 +422,17 @@ function isDecision(node: PlanningNode): node is DecisionNode {
 
 function isComponent(node: PlanningNode): node is ComponentNode {
   return node.kind === "component";
+}
+
+function isHitlGate(node: PlanningNode): node is HitlGateNode {
+  return node.kind === "hitl_gate";
+}
+
+function hitlGatesForWorkItem(graph: PlanningGraph, workItem: WorkItemNode): readonly HitlGateNode[] {
+  return graph.nodes
+    .filter(isHitlGate)
+    .filter((gate) => gate.blocks.includes(workItem.id))
+    .sort(compareById);
 }
 
 function compareById(left: PlanningNode, right: PlanningNode): number {
