@@ -149,8 +149,11 @@ export function parsePlanningGraphJson(value: unknown): PlanningGraph {
           labels: strings(record(node.readiness_snapshot).labels),
           reasons: strings(record(node.readiness_snapshot).reasons)
         },
+        contextSummary: optionalText(node.context_summary),
+        boundaryNotes: optionalStringArray(node.boundary_notes),
         acceptanceCriteria: strings(node.acceptance_criteria),
-        validationMethods: validationMethods(node.validation_methods)
+        validationMethods: validationMethods(node.validation_methods),
+        safeFailureGuidance: optionalText(node.safe_failure_guidance)
       })),
       ...(raw.nodes.document_projections ?? []).map((node) => ({
         id: text(node.id),
@@ -263,12 +266,15 @@ export function serializePlanningGraphJson(graph: PlanningGraph): unknown {
           labels: node.readinessSnapshot.labels,
           reasons: node.readinessSnapshot.reasons
         },
+        context_summary: node.contextSummary,
+        boundary_notes: node.boundaryNotes,
         acceptance_criteria: node.acceptanceCriteria,
         validation_methods: node.validationMethods.map((method) => ({
           type: method.type,
           command: method.command,
           expected_result: method.expectedResult
-        }))
+        })),
+        safe_failure_guidance: node.safeFailureGuidance
       })),
       document_projections: graph.nodes.filter(isDocumentProjection).map((node) => ({
         id: node.id,
@@ -419,6 +425,10 @@ function text(value: unknown): string {
 
 function optionalText(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function optionalStringArray(value: unknown): readonly string[] | undefined {
+  return Array.isArray(value) ? value.map(text) : undefined;
 }
 
 function strings(value: unknown): readonly string[] {

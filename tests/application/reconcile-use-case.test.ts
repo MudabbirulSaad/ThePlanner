@@ -27,8 +27,11 @@ function fixtureGraph(): PlanningGraph {
           title: "Work item",
           execution_state: "backlog",
           readiness_snapshot: { graph_version: 1, labels: ["agent_eligible", "afk_ready"], reasons: [] },
+          context_summary: "Reconcile a scoped Work Item projection edit.",
+          boundary_notes: ["Only update graph fields represented by safe projection patches."],
           acceptance_criteria: ["First criterion"],
-          validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+          validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }],
+          safe_failure_guidance: "Stop and report a conflict when an edit is unsafe."
         }
       ],
       document_projections: [],

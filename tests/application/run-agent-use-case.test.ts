@@ -81,8 +81,11 @@ const graph = parsePlanningGraphJson({
         title: "Run Codex",
         execution_state: "backlog",
         readiness_snapshot: { graph_version: 1, labels: ["agent_eligible", "afk_ready"], reasons: [] },
+        context_summary: "Run Codex for a scoped Work Item.",
+        boundary_notes: ["Only complete wi-001.", "Do not change unrelated files."],
         acceptance_criteria: ["Done"],
-        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }],
+        safe_failure_guidance: "Stop and report uncertainty before making unrelated changes."
       }
     ],
     decisions: [],

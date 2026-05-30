@@ -442,9 +442,21 @@ function render(exitCode: number, value: unknown, json: boolean): PlannerCliResu
   }
 
   if (isValidation(value)) {
+    const readinessReasons = Object.entries(value.readinessSnapshots)
+      .filter(([, snapshot]) => snapshot.reasons.length > 0)
+      .flatMap(([id, snapshot]) => snapshot.reasons.map((reason) => `${id}: ${reason}`));
     return {
       exitCode,
-      stdout: `graph_version: ${value.graphVersion}\nstatus: ${value.status}\nschema_status: ${value.schemaStatus}\nschema_errors: ${value.schemaErrors.length}\nerrors: ${value.semanticErrors.length}\nwarnings: ${value.semanticWarnings.length}\n`,
+      stdout: [
+        `graph_version: ${value.graphVersion}`,
+        `status: ${value.status}`,
+        `schema_status: ${value.schemaStatus}`,
+        `schema_errors: ${value.schemaErrors.length}`,
+        `errors: ${value.semanticErrors.length}`,
+        `warnings: ${value.semanticWarnings.length}`,
+        "readiness_reasons:",
+        ...(readinessReasons.length === 0 ? ["- None"] : readinessReasons.map((reason) => `- ${reason}`))
+      ].join("\n") + "\n",
       stderr: ""
     };
   }
@@ -527,6 +539,7 @@ function isValidation(value: unknown): value is {
   readonly schemaErrors: readonly unknown[];
   readonly semanticErrors: readonly unknown[];
   readonly semanticWarnings: readonly unknown[];
+  readonly readinessSnapshots: Readonly<Record<string, { readonly reasons: readonly string[] }>>;
 } {
   return Boolean(
     value &&

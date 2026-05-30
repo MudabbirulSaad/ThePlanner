@@ -303,23 +303,63 @@ export function deriveReadinessSnapshot(
   }
 
   const blockers = afkBlockers(graph, workItem, nodeById);
+  const readinessBlockers = afkReadinessBlockers(graph, workItem);
   const itemErrors = graphErrors.filter((finding) => finding.nodeId === workItem.id);
 
-  if (blockers.length > 0 || itemErrors.length > 0) {
+  if (blockers.length > 0 || readinessBlockers.length > 0 || itemErrors.length > 0) {
     return {
       graphVersion: graph.graphVersion,
       labels: blockers.some((reason) => reason.includes("HITL"))
         ? ["agent_eligible", "hitl_gated", "blocked"]
         : ["agent_eligible", "blocked"],
-      reasons: [...blockers, ...itemErrors.map((finding) => finding.message)]
+      reasons: [...blockers, ...readinessBlockers, ...itemErrors.map((finding) => finding.message)]
     };
   }
 
   return {
     graphVersion: graph.graphVersion,
     labels: ["agent_eligible", "afk_ready"],
-    reasons: ["No unresolved Work Item dependencies or semantic AFK blockers remain."]
+    reasons: ["Context, boundaries, validation, dependency closure, and safe-failure guidance are AFK-ready."]
   };
+}
+
+function afkReadinessBlockers(graph: PlanningGraph, workItem: WorkItemNode): readonly string[] {
+  const reasons: string[] = [];
+
+  const hasContextSummary = Boolean(workItem.contextSummary?.trim());
+  const hasTraceContext = graph.edges.some(
+    (edge) =>
+      edge.source === workItem.id &&
+      ["satisfies", "references"].includes(edge.type) &&
+      Boolean(graph.nodes.find((node) => node.id === edge.target && isRequirementOrAcceptedDecision(node)))
+  );
+  if (!hasContextSummary && !hasTraceContext) {
+    reasons.push("Missing context: add a context_summary or trace the Work Item to a Requirement or accepted Decision.");
+  }
+
+  if ((workItem.boundaryNotes ?? []).filter((note) => note.trim()).length === 0) {
+    reasons.push("Missing boundaries/non-goals: add boundary_notes that constrain autonomous implementation.");
+  }
+
+  if (!hasAfkValidation(workItem)) {
+    reasons.push("Missing executable or safe manual validation: add a command/test validation method with a command, or document safe manual validation.");
+  }
+
+  if (!workItem.safeFailureGuidance?.trim()) {
+    reasons.push("Missing safe-failure guidance: add safe_failure_guidance that tells the agent how to stop or report uncertainty.");
+  }
+
+  return reasons;
+}
+
+function hasAfkValidation(workItem: WorkItemNode): boolean {
+  return workItem.validationMethods.some((method) => {
+    if ((method.type === "command" || method.type === "test") && method.command?.trim()) {
+      return true;
+    }
+
+    return method.type === "manual_review" && /\bsafe manual validation\b/i.test(method.expectedResult);
+  });
 }
 
 function afkBlockers(

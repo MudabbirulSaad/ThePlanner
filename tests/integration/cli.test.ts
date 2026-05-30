@@ -38,8 +38,11 @@ const graph = parsePlanningGraphJson({
         title: "Work",
         execution_state: "backlog",
         readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+        context_summary: "Complete the scoped CLI fixture Work Item.",
+        boundary_notes: ["Only complete wi-001.", "Do not change unrelated files."],
         acceptance_criteria: ["Done"],
-        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }],
+        safe_failure_guidance: "Stop and report uncertainty before making unrelated changes."
       }
     ],
     decisions: [],
@@ -151,8 +154,11 @@ describe("planner CLI use case wiring", () => {
             title: "Run Default Agent",
             execution_state: "backlog",
             readiness_snapshot: { graph_version: 1, labels: ["agent_eligible", "afk_ready"], reasons: [] },
+            context_summary: "Run the configured default agent for wi-001.",
+            boundary_notes: ["Only complete wi-001."],
             acceptance_criteria: ["Done"],
-            validation_methods: []
+            validation_methods: [{ type: "manual_review", expected_result: "Safe manual validation: default configured validation command will run after the agent." }],
+            safe_failure_guidance: "Stop and report uncertainty before changing unrelated files."
           }
         ],
         decisions: [],
@@ -228,6 +234,46 @@ describe("planner CLI use case wiring", () => {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
     }
+  });
+
+  it("prints actionable readiness reasons in validation output", async () => {
+    const notAfkGraph = parsePlanningGraphJson({
+      schema_version: "0.1.0",
+      graph_version: 1,
+      nodes: {
+        requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+        work_items: [
+          {
+            id: "wi-001",
+            title: "Needs Boundaries",
+            execution_state: "backlog",
+            readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            context_summary: "Scoped context exists.",
+            acceptance_criteria: ["Done"],
+            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }],
+            safe_failure_guidance: "Stop and report uncertainty."
+          }
+        ],
+        decisions: [],
+        assumptions: [],
+        risks: [],
+        open_questions: [],
+        hitl_gates: [],
+        components: [],
+        document_projections: [],
+        execution_slices: []
+      },
+      edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
+    });
+
+    const result = await runPlannerCli(["validate"], {
+      graphRepository: { load: async () => notAfkGraph },
+      projectionWriter: { writeAll: async () => undefined }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("readiness_reasons:");
+    expect(result.stdout).toContain("wi-001: Missing boundaries/non-goals");
   });
 
   it("reports schema errors and skips semantic validation for malformed graph shape", async () => {
@@ -762,8 +808,11 @@ describe("planner CLI use case wiring", () => {
             title: "Work",
             execution_state: "backlog",
             readiness_snapshot: { graph_version: 1, labels: ["agent_eligible"], reasons: [] },
+            context_summary: "Prepare a scoped Work Item with generated document context.",
+            boundary_notes: ["Use generated context only for wi-001."],
             acceptance_criteria: ["Done"],
-            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+            validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }],
+            safe_failure_guidance: "Stop and report missing context before making changes."
           }
         ],
         decisions: [],

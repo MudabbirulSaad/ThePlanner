@@ -15,6 +15,17 @@ function cloneGraph() {
   return JSON.parse(readFileSync("examples/ai-engineering-planner-v1/planning/graph.json", "utf8"));
 }
 
+function afkCandidateRaw() {
+  const raw = cloneGraph();
+  const workItem = raw.nodes.work_items.find((node: { id: string }) => node.id === "wi-006");
+  workItem.execution_state = "backlog";
+  workItem.readiness_snapshot.labels = ["agent_eligible"];
+  workItem.context_summary = "Reconcile edited Work Item projections back to safe graph patches.";
+  workItem.boundary_notes = ["Only implement reconciliation behavior for projection edits.", "Do not change agent execution semantics."];
+  workItem.safe_failure_guidance = "Stop and report a conflict when an edit cannot be mapped to a safe graph patch.";
+  return { raw, workItem };
+}
+
 describe("graph validation and readiness", () => {
   it("validates the clean starter workspace graph", () => {
     const graph = parsePlanningGraphJson(JSON.parse(readFileSync("planning/graph.json", "utf8")));
@@ -39,6 +50,70 @@ describe("graph validation and readiness", () => {
     expect(result.schemaStatus).toBe("not_run");
     expect(result.readinessSnapshots["wi-003"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
     expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
+  });
+
+  it("marks a Work Item AFK-ready only when deep readiness checks pass", () => {
+    const { raw } = afkCandidateRaw();
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
+      "Context, boundaries, validation, dependency closure, and safe-failure guidance are AFK-ready."
+    ]);
+  });
+
+  it("blocks AFK readiness when context is missing", () => {
+    const { raw, workItem } = afkCandidateRaw();
+    delete workItem.context_summary;
+    raw.edges = raw.edges.filter((edge: { source: string; type: string }) => edge.source !== "wi-006" || edge.type !== "satisfies");
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toContain(
+      "Missing context: add a context_summary or trace the Work Item to a Requirement or accepted Decision."
+    );
+  });
+
+  it("blocks AFK readiness when boundaries are missing", () => {
+    const { raw, workItem } = afkCandidateRaw();
+    workItem.boundary_notes = [];
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
+      "Missing boundaries/non-goals: add boundary_notes that constrain autonomous implementation."
+    ]);
+  });
+
+  it("blocks AFK readiness when validation is not executable or safely manual", () => {
+    const { raw, workItem } = afkCandidateRaw();
+    workItem.validation_methods = [{ type: "manual_review", expected_result: "Reviewer checks the result." }];
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
+      "Missing executable or safe manual validation: add a command/test validation method with a command, or document safe manual validation."
+    ]);
+  });
+
+  it("blocks AFK readiness when safe-failure guidance is missing", () => {
+    const { raw, workItem } = afkCandidateRaw();
+    delete workItem.safe_failure_guidance;
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-006"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
+      "Missing safe-failure guidance: add safe_failure_guidance that tells the agent how to stop or report uncertainty."
+    ]);
   });
 
   it("rejects unsupported Planning Graph schema versions", () => {
@@ -96,6 +171,9 @@ describe("graph validation and readiness", () => {
     const workItem = raw.nodes.work_items.find((node: { id: string }) => node.id === "wi-006");
     workItem.execution_state = "backlog";
     workItem.readiness_snapshot.labels = ["agent_eligible"];
+    workItem.context_summary = "Reconcile edited projections.";
+    workItem.boundary_notes = ["Only test decision dependency blocking."];
+    workItem.safe_failure_guidance = "Stop and report unresolved decisions.";
     raw.nodes.decisions[0].status = "proposed";
     raw.nodes.decisions[1].status = "revisit";
     raw.edges.push(

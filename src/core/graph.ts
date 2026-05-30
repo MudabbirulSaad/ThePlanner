@@ -167,8 +167,11 @@ export interface ValidationMethod {
 export interface WorkItemNode extends PlanningNodeBase<"work_item", WorkItemId> {
   readonly executionState: ExecutionState;
   readonly readinessSnapshot: ReadinessSnapshot;
+  readonly contextSummary?: string;
+  readonly boundaryNotes?: readonly string[];
   readonly acceptanceCriteria: readonly string[];
   readonly validationMethods: readonly ValidationMethod[];
+  readonly safeFailureGuidance?: string;
 }
 
 export interface DocumentProjectionNode

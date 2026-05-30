@@ -96,8 +96,11 @@ export const graphSchemaTemplate = `{
           },
           "additionalProperties": false
         },
+        "context_summary": { "type": "string" },
+        "boundary_notes": { "type": "array", "items": { "type": "string" } },
         "acceptance_criteria": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
-        "validation_methods": { "type": "array", "items": { "type": "object" }, "minItems": 1 }
+        "validation_methods": { "type": "array", "items": { "type": "object" }, "minItems": 1 },
+        "safe_failure_guidance": { "type": "string" }
       },
       "additionalProperties": true
     },

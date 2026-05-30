@@ -12,6 +12,7 @@ import type {
   RiskNode,
   WorkItemNode
 } from "./graph.js";
+import { deriveReadinessSnapshot } from "./validation.js";
 
 export interface RenderedProjection {
   readonly path: string;
@@ -63,6 +64,9 @@ export function renderWorkItemProjection(
     .map((edge) => edge.source);
   const requirements = outgoing(graph, workItem.id, "satisfies").map((edge) => edge.target);
   const hitlGates = hitlGatesForWorkItem(graph, workItem);
+  const context = workItem.contextSummary?.trim() || `${workItem.title} supports ThePlanner V1 implementation.`;
+  const boundaries = (workItem.boundaryNotes ?? []).filter((note) => note.trim());
+  const readiness = deriveReadinessSnapshot(graph, workItem);
 
   return {
     path: `planning/work-items/${slug(workItem.id, workItem.title)}.md`,
@@ -71,12 +75,12 @@ export function renderWorkItemProjection(
       title: workItem.title,
       graph_version: graph.graphVersion,
       execution_state: workItem.executionState,
-      readiness: `[${workItem.readinessSnapshot.labels.join(", ")}]`,
+      readiness: `[${readiness.labels.join(", ")}]`,
       depends_on: inlineList(dependencies),
       blocks: inlineList(blocks),
       requirements: inlineList(requirements),
       hitl_gates: inlineList(hitlGates.map((gate) => gate.id))
-  })}\n# ${workItem.title}\n\n## Context\n\n${workItem.title} supports ThePlanner V1 implementation.\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\nKeep implementation inside this Work Item's accepted slice.\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\n${renderWorkItemHitlGates(graph, hitlGates)}\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
+  })}\n# ${workItem.title}\n\n## Context\n\n${context}\n\n## Desired Outcome\n\n${workItem.acceptanceCriteria[0] ?? "Deliver the accepted Work Item outcome."}\n\n## Boundaries / Non-goals\n\n${list(boundaries)}\n\n## Acceptance Criteria\n\n${list(workItem.acceptanceCriteria)}\n\n## Validation\n\n${list(workItem.validationMethods.map((method) => method.command ?? method.expectedResult))}\n\n## Dependencies\n\n${dependencies.length === 0 ? "No unresolved dependencies." : dependencies.map((id) => `Depends on \`${id}\`.`).join("\n")}\n\n## HITL Gates\n\n${renderWorkItemHitlGates(graph, hitlGates)}\n\n## Readiness Details\n\n${list(readiness.reasons)}\n\n## Safe Failure\n\n${workItem.safeFailureGuidance?.trim() || "Stop and report the missing guidance before making changes."}\n\n## Agent Notes\n\nUse the Planning Graph as the source of truth.\n`
   };
 }
 

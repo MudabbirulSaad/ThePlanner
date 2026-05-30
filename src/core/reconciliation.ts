@@ -10,7 +10,7 @@ import type {
 } from "./graph.js";
 import { graphVersion } from "./graph.js";
 import { renderWorkItemProjection } from "./projections.js";
-import { validatePlanningGraph } from "./validation.js";
+import { deriveReadinessSnapshot, validatePlanningGraph } from "./validation.js";
 
 export interface ProjectionInput {
   readonly path: string;
@@ -110,7 +110,7 @@ export function reconcileGraphProjections(
 
     compareScalar("title", workItem.title, stringValue(parsed.frontmatter.title), workItem, projection, proposedPatches);
     compareExecutionState(workItem, parsed, projection, proposedPatches, conflicts);
-    compareReadiness(workItem, parsed, projection, conflicts);
+    compareReadiness(graph, workItem, parsed, projection, conflicts);
     compareAcceptanceCriteria(workItem, parsed, projection, proposedPatches);
     compareValidationMethods(workItem, parsed, projection, proposedPatches);
     compareIdListEdgeField({
@@ -257,13 +257,15 @@ function compareExecutionState(
 }
 
 function compareReadiness(
+  graph: PlanningGraph,
   workItem: WorkItemNode,
   parsed: ParsedWorkItemProjection,
   projection: ProjectionInput,
   conflicts: ReconciliationConflict[]
 ) {
   const next = stringList(parsed.frontmatter.readiness);
-  if (next.length === 0 || sameList(next, workItem.readinessSnapshot.labels)) {
+  const derivedReadiness = deriveReadinessSnapshot(graph, workItem);
+  if (next.length === 0 || sameList(next, workItem.readinessSnapshot.labels) || sameList(next, derivedReadiness.labels)) {
     return;
   }
 

@@ -22,7 +22,7 @@ Validation reports errors and warnings
 
 ## Boundaries / Non-goals
 
-Keep implementation inside this Work Item's accepted slice.
+- None
 
 ## Acceptance Criteria
 
@@ -41,6 +41,14 @@ Depends on `wi-002`.
 ## HITL Gates
 
 None.
+
+## Readiness Details
+
+- Work Item is complete and already validated.
+
+## Safe Failure
+
+Stop and report the missing guidance before making changes.
 
 ## Agent Notes
 

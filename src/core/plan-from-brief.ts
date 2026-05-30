@@ -656,13 +656,19 @@ function buildWorkItems(
       labels: ["agent_eligible"],
       reasons: ["Dry-run proposal only; review before applying."]
     },
+    contextSummary: `${item.title} implements part of the refined brief MVP scope and traces to ${requirements[0]?.id ?? "req-001"}.`,
+    boundaryNotes: [
+      "Stay inside the accepted Work Item slice.",
+      "Do not add product behavior outside the refined brief MVP scope."
+    ],
     acceptanceCriteria: item.acceptanceCriteria,
     validationMethods: [
       {
         type: "manual_review",
-        expectedResult: `Reviewer confirms ${item.title.toLowerCase()} satisfies ${requirements[0]?.id ?? "req-001"}.`
+        expectedResult: `Safe manual validation: reviewer confirms ${item.title.toLowerCase()} satisfies ${requirements[0]?.id ?? "req-001"} without autonomous execution.`
       }
-    ]
+    ],
+    safeFailureGuidance: "Stop and request human review if required context, boundaries, or validation evidence is unclear."
   }));
 }
 
