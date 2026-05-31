@@ -1,10 +1,27 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultPlannerConfig, parsePlannerConfig } from "../../src/application/index.js";
+import { defaultPlannerConfig, parsePlannerConfig, serializePlannerConfigJson } from "../../src/application/index.js";
 
 describe("planner config", () => {
   it("uses deterministic defaults when no config file is present", () => {
     expect(parsePlannerConfig(undefined)).toEqual(defaultPlannerConfig);
+  });
+
+  it("serializes defaults with deterministic key order", () => {
+    expect(serializePlannerConfigJson()).toBe(`{
+  "planningDirectory": "planning",
+  "defaultAgent": "codex",
+  "agentCommands": {
+    "codex": "codex exec -",
+    "claude": "claude",
+    "gemini": "gemini"
+  },
+  "validationCommands": [],
+  "agentRunnerTimeoutMs": 1800000,
+  "validationCommandTimeoutMs": 600000,
+  "processOutputLimitBytes": 1048576
+}
+`);
   });
 
   it("merges project config with defaults", () => {

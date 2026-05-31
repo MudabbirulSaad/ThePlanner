@@ -37,6 +37,7 @@ describe("init workspace use case", () => {
       "docs/prd",
       "docs/rfc",
       "docs/architecture",
+      "planner.config.json",
       "planning/intake/idea.md",
       "planning/change-log.ndjson",
       "planning/graph.schema.json",
@@ -55,19 +56,26 @@ describe("init workspace use case", () => {
       graph_version: 1,
       source: "starter-workspace"
     });
+    expect(JSON.parse(initializer.files.get("planner.config.json") ?? "{}")).toMatchObject({
+      planningDirectory: "planning",
+      defaultAgent: "codex"
+    });
   });
 
   it("reports existing files without overwriting user content", async () => {
     const initializer = new FakeWorkspaceInitializer();
     await initWorkspaceUseCase(initializer);
+    initializer.files.set("planner.config.json", "{\"planningDirectory\":\"custom-planning\"}\n");
     initializer.files.set("planning/intake/idea.md", "user idea\n");
     initializer.files.set("planning/graph.json", "{\"user\":true}\n");
 
     const result = await initWorkspaceUseCase(initializer);
 
     expect(result.created).toEqual([]);
+    expect(result.existing).toContain("planner.config.json");
     expect(result.existing).toContain("planning/intake/idea.md");
     expect(result.existing).toContain("planning/graph.json");
+    expect(initializer.files.get("planner.config.json")).toBe("{\"planningDirectory\":\"custom-planning\"}\n");
     expect(initializer.files.get("planning/intake/idea.md")).toBe("user idea\n");
     expect(initializer.files.get("planning/graph.json")).toBe("{\"user\":true}\n");
   });

@@ -37,6 +37,7 @@ import {
   parseProposedGraphOperationProposalJson
 } from "./graph-operation-schema.js";
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "./graph-json.js";
+import { serializePlannerConfigJson } from "./planner-config.js";
 
 export interface GraphRepository {
   readonly load: () => Promise<PlanningGraph>;
@@ -2528,6 +2529,10 @@ const starterDirectories = [
 ] as const;
 
 const starterFiles = [
+  {
+    path: "planner.config.json",
+    content: serializePlannerConfigJson()
+  },
   {
     path: "planning/intake/idea.md",
     content: intakeBriefTemplate

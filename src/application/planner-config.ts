@@ -24,6 +24,26 @@ export const defaultPlannerConfig: PlannerConfig = {
   processOutputLimitBytes: 1024 * 1024
 };
 
+export function serializePlannerConfigJson(config: PlannerConfig = defaultPlannerConfig): string {
+  return `${JSON.stringify(
+    {
+      planningDirectory: config.planningDirectory,
+      defaultAgent: config.defaultAgent,
+      agentCommands: {
+        codex: config.agentCommands.codex,
+        claude: config.agentCommands.claude,
+        gemini: config.agentCommands.gemini
+      },
+      validationCommands: config.validationCommands,
+      agentRunnerTimeoutMs: config.agentRunnerTimeoutMs,
+      validationCommandTimeoutMs: config.validationCommandTimeoutMs,
+      processOutputLimitBytes: config.processOutputLimitBytes
+    },
+    null,
+    2
+  )}\n`;
+}
+
 export function parsePlannerConfig(value: unknown, sourcePath = "planner.config.json"): PlannerConfig {
   if (value === undefined) {
     return defaultPlannerConfig;

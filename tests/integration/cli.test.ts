@@ -24,7 +24,9 @@ import {
   FileRepoScanner,
   FileWorkspaceChangeTracker,
   GitHubDryRunTrackerSyncAdapter,
-  FileWorkspaceInitializer
+  FileWorkspaceInitializer,
+  createPlanningPathMapper,
+  loadFilePlannerConfig
 } from "../../src/adapters/index.js";
 import { renderWorkItemProjection } from "../../src/core/index.js";
 import { validatePlanningGraph } from "../../src/core/index.js";
@@ -484,6 +486,7 @@ describe("planner CLI use case wiring", () => {
           "docs/prd",
           "docs/rfc",
           "docs/architecture",
+          "planner.config.json",
           "planning/intake/idea.md",
           "planning/change-log.ndjson",
           "planning/graph.schema.json",
@@ -495,9 +498,14 @@ describe("planner CLI use case wiring", () => {
       expect(JSON.parse(await readFile("planning/graph.schema.json", "utf8"))).toMatchObject({
         title: "ThePlanner Graph"
       });
+      expect(JSON.parse(await readFile("planner.config.json", "utf8"))).toMatchObject({
+        planningDirectory: "planning",
+        defaultAgent: "codex"
+      });
       expect(validatePlanningGraph(parsePlanningGraphJson(graphJson)).status).toBe("pass");
       expect(await readFile("planning/intake/idea.md", "utf8")).toContain("## Target Users");
 
+      await writeFile("planner.config.json", "{\"planningDirectory\":\"custom-planning\"}\n", "utf8");
       await writeFile("planning/intake/idea.md", "do not overwrite\n", "utf8");
       const second = await runPlannerCli(["init", "--json"], {
         graphRepository: { load: async () => graph },
@@ -506,8 +514,60 @@ describe("planner CLI use case wiring", () => {
       });
 
       expect(second.exitCode).toBe(0);
+      expect(JSON.parse(second.stdout).existing).toContain("planner.config.json");
       expect(JSON.parse(second.stdout).existing).toContain("planning/intake/idea.md");
+      expect(await readFile("planner.config.json", "utf8")).toBe("{\"planningDirectory\":\"custom-planning\"}\n");
       expect(await readFile("planning/intake/idea.md", "utf8")).toBe("do not overwrite\n");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("loads virtual defaults when config is missing and initializes a configured planning directory", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-init-custom-config-"));
+
+    try {
+      process.chdir(workspace);
+
+      await expect(loadFilePlannerConfig()).resolves.toMatchObject({
+        planningDirectory: "planning",
+        defaultAgent: "codex"
+      });
+
+      await writeFile("planner.config.json", "{\"planningDirectory\":\"project-planning\"}\n", "utf8");
+      const config = await loadFilePlannerConfig();
+      const result = await runPlannerCli(["init", "--json"], {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        workspaceInitializer: new FileWorkspaceInitializer(createPlanningPathMapper(config.planningDirectory))
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        created: [
+          "planning",
+          "planning/intake",
+          "planning/work-items",
+          "planning/execution-slices",
+          "docs/prd",
+          "docs/rfc",
+          "docs/architecture",
+          "planning/intake/idea.md",
+          "planning/change-log.ndjson",
+          "planning/graph.schema.json",
+          "planning/graph.json"
+        ],
+        existing: ["planner.config.json"]
+      });
+      expect(JSON.parse(await readFile("planner.config.json", "utf8"))).toEqual({
+        planningDirectory: "project-planning"
+      });
+      expect(JSON.parse(await readFile("project-planning/graph.json", "utf8"))).toMatchObject({
+        schema_version: "0.1.0",
+        source: "starter-workspace"
+      });
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
