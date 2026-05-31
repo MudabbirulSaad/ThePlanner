@@ -5,7 +5,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    ignores: ["dist/**", "node_modules/**", "coverage/**"]
+    ignores: ["dist/**", "**/node_modules/**", "**/.next/**", "coverage/**", "e2e-visible-test-workspace/**"]
   },
   {
     files: ["**/*.ts"],

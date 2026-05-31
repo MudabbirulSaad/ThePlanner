@@ -1056,6 +1056,36 @@ describe("planner CLI use case wiring", () => {
     });
   });
 
+  it("surfaces planning-quality findings during export dry-run", async () => {
+    const scaffoldGraph = parsePlanningGraphJson(
+      JSON.parse(await readFile("tests/fixtures/planning-quality/scaffold-heavy-graph.json", "utf8"))
+    );
+
+    const result = await runPlannerCli(["export", "--dry-run", "--json"], {
+      graphRepository: { load: async () => scaffoldGraph },
+      projectionWriter: { writeAll: async () => undefined },
+      projectionReader: {
+        readMany: async () => [],
+        readExistingMany: async () => []
+      }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      dryRun: true,
+      applied: false,
+      planningQuality: {
+        status: "warning",
+        findings: [
+          { code: "planning_quality_product_intent_scaffolded" },
+          { code: "planning_quality_decisions_missing" },
+          { code: "planning_quality_component_generic", nodeId: "comp-001" },
+          { code: "planning_quality_work_item_fallback", nodeId: "wi-001" }
+        ]
+      }
+    });
+  });
+
   it("reports updated projection sections that apply may overwrite", async () => {
     const workItem = graph.nodes.find((node) => node.kind === "work_item");
     if (!workItem || workItem.kind !== "work_item") {

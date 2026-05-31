@@ -4,6 +4,7 @@ import {
   currentPlanningGraphSchemaVersion,
   generateIntakeQuestions,
   proposePlanningGraphFromBrief,
+  assessPlanningQuality,
   reconciliationProjectionPaths,
   renderRefinedBriefScaffold,
   reconcileGraphProjections,
@@ -13,6 +14,7 @@ import {
 import type {
   GraphValidationResult,
   IntakeQuestionSet,
+  PlanningQualityResult,
   PlanningGraph,
   ProjectionInput,
   ProposedGraphOperation,
@@ -610,16 +612,19 @@ export async function exportProjectionsUseCase(args: {
   readonly updated: readonly string[];
   readonly unchanged: readonly string[];
   readonly humanAuthoredWarnings: readonly ProjectionOverwriteWarning[];
+  readonly planningQuality: PlanningQualityResult;
   readonly projections: readonly ProjectionExportEntry[];
   readonly exported?: readonly string[];
 }> {
   const graph = await args.graphRepository.load();
+  const planningQuality = assessPlanningQuality(graph);
   const projections = renderAllProjections(graph);
   const plan = await planProjectionExport(args.projectionReader, projections);
 
   if (!args.apply) {
     return {
       ...plan,
+      planningQuality,
       dryRun: true,
       applied: false
     };
@@ -628,6 +633,7 @@ export async function exportProjectionsUseCase(args: {
   const exported = await args.projectionWriter.writeAll(projections);
   return {
     ...plan,
+    planningQuality,
     dryRun: false,
     applied: true,
     exported: exported ?? projections.map((projection) => projection.path)

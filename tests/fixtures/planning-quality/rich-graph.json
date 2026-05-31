@@ -1,0 +1,78 @@
+{
+  "schema_version": "0.1.0",
+  "graph_version": 1,
+  "product_intent": {
+    "summary": "The planner exports repository-native planning artifacts from a canonical graph.",
+    "target_users": ["Engineers reviewing implementation plans", "Coding agents consuming scoped execution context"],
+    "goals": ["Produce deterministic planning artifacts", "Keep execution slices traceable to requirements and decisions"],
+    "mvp_scope": ["Export PRD, RFC, architecture, dependency, and Work Item projections"],
+    "non_goals": ["Live provider calls during deterministic export"],
+    "constraints": ["Core logic remains independent from filesystem and CLI adapters"],
+    "success_criteria": ["Export output can be reviewed before implementation handoff"],
+    "scaffold_notes": []
+  },
+  "nodes": {
+    "requirements": [
+      {
+        "id": "req-001",
+        "title": "Export projections",
+        "type": "functional",
+        "statement": "The planner must export deterministic repository planning projections.",
+        "status": "active"
+      }
+    ],
+    "decisions": [
+      {
+        "id": "dec-001",
+        "title": "Use canonical graph as source",
+        "status": "accepted",
+        "selected_option": "Use the Planning Graph as the source of truth.",
+        "rationale": "A canonical graph keeps generated artifacts deterministic and reviewable.",
+        "rejected_alternatives": ["Treat Markdown projections as canonical state"],
+        "unresolved_questions": []
+      }
+    ],
+    "assumptions": [],
+    "risks": [],
+    "open_questions": [],
+    "hitl_gates": [],
+    "components": [
+      {
+        "id": "comp-001",
+        "title": "Planning graph core",
+        "status": "active",
+        "responsibility": "Represent planning nodes, dependency edges, validation, readiness, and projection inputs.",
+        "interfaces": [
+          {
+            "name": "Domain API",
+            "direction": "internal",
+            "contract": "Pure functions transform typed graph inputs without filesystem or process access."
+          }
+        ],
+        "depends_on": [],
+        "constraints": ["No adapter imports from core"],
+        "risks": []
+      }
+    ],
+    "work_items": [
+      {
+        "id": "wi-001",
+        "title": "Wire projection export",
+        "execution_state": "backlog",
+        "readiness_snapshot": { "graph_version": 1, "labels": ["agent_eligible"], "reasons": [] },
+        "context_summary": "Connect projection rendering to the export use case through application ports.",
+        "boundary_notes": ["Do not add live provider calls.", "Keep filesystem writes behind adapter ports."],
+        "acceptance_criteria": ["Export reports deterministic projection paths."],
+        "validation_methods": [{ "type": "command", "command": "npm test", "expected_result": "Tests pass." }],
+        "safe_failure_guidance": "Stop and report any unsafe projection path or missing graph metadata."
+      }
+    ],
+    "document_projections": [],
+    "execution_slices": []
+  },
+  "edges": [
+    { "source": "wi-001", "target": "req-001", "type": "satisfies", "rationale": "Traceability." },
+    { "source": "wi-001", "target": "dec-001", "type": "references", "rationale": "Export uses the canonical graph decision." },
+    { "source": "wi-001", "target": "comp-001", "type": "references", "rationale": "Work occurs in the core/API boundary." }
+  ]
+}

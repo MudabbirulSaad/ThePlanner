@@ -1,0 +1,65 @@
+{
+  "schema_version": "0.1.0",
+  "graph_version": 1,
+  "product_intent": {
+    "summary": "TODO: Add a concise product summary before rendering the PRD projection.",
+    "target_users": ["TODO: Identify target users."],
+    "goals": ["TODO: Define product goals."],
+    "mvp_scope": ["TODO: Define MVP scope."],
+    "non_goals": ["TODO: Define non-goals."],
+    "constraints": ["TODO: Define constraints."],
+    "success_criteria": ["TODO: Define success criteria."],
+    "scaffold_notes": ["TODO: Identify primary users, secondary users, and users explicitly out of scope."]
+  },
+  "nodes": {
+    "requirements": [
+      {
+        "id": "req-001",
+        "title": "MVP scope",
+        "type": "functional",
+        "statement": "Create the smallest coherent product described by the refined brief.",
+        "status": "active"
+      }
+    ],
+    "decisions": [],
+    "assumptions": [],
+    "risks": [],
+    "open_questions": [],
+    "hitl_gates": [],
+    "components": [
+      {
+        "id": "comp-001",
+        "title": "Component",
+        "status": "active",
+        "responsibility": "Responsible for the application.",
+        "interfaces": [],
+        "depends_on": [],
+        "constraints": [],
+        "risks": []
+      }
+    ],
+    "work_items": [
+      {
+        "id": "wi-001",
+        "title": "Implement the smallest coherent MVP workflow described by the refined brief.",
+        "execution_state": "backlog",
+        "readiness_snapshot": { "graph_version": 1, "labels": ["agent_eligible"], "reasons": [] },
+        "context_summary": "Implement the smallest coherent MVP workflow described by the refined brief.",
+        "boundary_notes": ["Stay inside this execution slice."],
+        "acceptance_criteria": ["The slice has deterministic validation evidence before it is marked complete."],
+        "validation_methods": [
+          {
+            "type": "manual_review",
+            "expected_result": "Safe manual validation: reviewer confirms the scoped behavior, boundaries, and acceptance criteria without autonomous execution."
+          }
+        ],
+        "safe_failure_guidance": "Stop and report missing context before changing unrelated scope."
+      }
+    ],
+    "document_projections": [],
+    "execution_slices": []
+  },
+  "edges": [
+    { "source": "wi-001", "target": "req-001", "type": "satisfies", "rationale": "Traceability." }
+  ]
+}
