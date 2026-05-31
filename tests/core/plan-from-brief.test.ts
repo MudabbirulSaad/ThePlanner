@@ -212,6 +212,133 @@ describe("plan from refined brief proposal", () => {
     expect(renderedWorkItem?.content).toContain("Required action: Confirm or revise Assumption asm-001");
   });
 
+  it("honors explicit Open Question blocking markers before phrase-based detection", () => {
+    const proposal = proposePlanningGraphFromBrief({
+      sourcePath: "brief.md",
+      content: [
+        "# Refined Brief",
+        "",
+        "## Product Summary",
+        "",
+        "Build a planning assistant for local release coordination.",
+        "",
+        "## MVP Scope",
+        "",
+        "Generate Work Items for release preparation.",
+        "",
+        "## Success Criteria",
+        "",
+        "Generated Work Items show only genuine execution blockers.",
+        "",
+        "## Open Questions",
+        "",
+        "- Which release announcement wording should be used? Blocks execution: no",
+        "- Which credential rotation window must be answered before execution? Blocks execution: yes",
+        "- Which dashboard theme should be preferred? Blocking: false"
+      ].join("\n")
+    });
+
+    const openQuestions = proposal.graph.nodes.filter((node) => node.kind === "open_question");
+    const hitlGates = proposal.graph.nodes.filter((node) => node.kind === "hitl_gate");
+    const validation = validatePlanningGraph(proposal.graph);
+
+    expect(openQuestions).toEqual([
+      expect.objectContaining({
+        id: "oq-001",
+        question: "Which release announcement wording should be used?",
+        priority: "medium",
+        blocksExecution: false
+      }),
+      expect.objectContaining({
+        id: "oq-002",
+        question: "Which credential rotation window must be answered before execution?",
+        priority: "high",
+        blocksExecution: true
+      }),
+      expect.objectContaining({
+        id: "oq-003",
+        question: "Which dashboard theme should be preferred?",
+        priority: "low",
+        blocksExecution: false
+      })
+    ]);
+    expect(hitlGates).toEqual([
+      expect.objectContaining({ id: "hitl-001", title: "Answer execution-blocking Open Question oq-002" })
+    ]);
+    expect(
+      proposal.graph.edges
+        .filter((edge) => edge.type === "depends_on" && edge.target.startsWith("oq-"))
+        .map((edge) => edge.target)
+    ).toEqual(["oq-002", "oq-002", "oq-002"]);
+    expect(validation.readinessSnapshots["wi-001"]?.reasons).not.toContain(
+      "Depends on execution-blocking Open Question oq-001."
+    );
+    expect(validation.readinessSnapshots["wi-001"]?.reasons).toContain(
+      "Depends on execution-blocking Open Question oq-002."
+    );
+  });
+
+  it("generates execution-focused Work Items from an advanced todo refined brief", () => {
+    const content = readFileSync("tests/fixtures/intake/advanced-todo-refined-brief.md", "utf8");
+    const proposal = proposePlanningGraphFromBrief({
+      sourcePath: "tests/fixtures/intake/advanced-todo-refined-brief.md",
+      content
+    });
+    const workItems = proposal.graph.nodes.filter((node) => node.kind === "work_item");
+    const validation = validatePlanningGraph(proposal.graph);
+    const firstProjection = renderAllProjections(proposal.graph).find((projection) =>
+      projection.path.includes("wi-001-")
+    );
+
+    expect(validation.status).toBe("pass");
+    expect(workItems.map((workItem) => workItem.title)).toEqual([
+      "Implement add todo workflow",
+      "Implement edit todo workflow",
+      "Implement todo completion workflow",
+      "Implement todo filtering workflow",
+      "Implement todo persistence"
+    ]);
+    expect(workItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "wi-001",
+          contextSummary: expect.stringContaining("Users can add a todo with required text and optional notes"),
+          boundaryNotes: expect.arrayContaining([
+            "Stay inside this execution slice: Users can add a todo with required text and optional notes."
+          ]),
+          acceptanceCriteria: expect.arrayContaining([
+            "Users can add a todo with required text and optional notes is implemented within the MVP scope.",
+            "Implementation supports success criterion: A user can manage a list of todos across reloads."
+          ]),
+          validationMethods: [
+            {
+              type: "command",
+              command: "npm test",
+              expectedResult: "npm test passes for the scoped implementation slice."
+            }
+          ],
+          safeFailureGuidance: expect.stringContaining("Stop and report")
+        })
+      ])
+    );
+    expect(validation.readinessSnapshots["wi-001"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
+    expect(validation.readinessSnapshots["wi-001"]?.reasons).not.toContain(
+      "Depends on execution-blocking Open Question oq-001."
+    );
+    expect(proposal.graph.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "wi-001", target: "req-001", type: "satisfies" }),
+        expect.objectContaining({ source: "wi-001", target: "dec-001", type: "references" }),
+        expect.objectContaining({ source: "wi-001", target: "comp-001", type: "references" }),
+        expect.objectContaining({ source: "wi-001", target: "risk-001", type: "references" })
+      ])
+    );
+    expect(firstProjection?.content).toContain("## Context");
+    expect(firstProjection?.content).toContain("Users can add a todo with required text and optional notes");
+    expect(firstProjection?.content).toContain("## Validation\n\n- npm test");
+    expect(firstProjection?.content).toContain("## Safe Failure");
+  });
+
   it("rejects an empty refined brief", () => {
     expect(() =>
       proposePlanningGraphFromBrief({

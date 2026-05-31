@@ -83,7 +83,7 @@ export function proposePlanningGraphFromBrief(input: PlanFromBriefInput): GraphP
   const openQuestions = buildOpenQuestions(sections, provenance, scaffoldedFields);
   const risks = buildRisks(sections, provenance, scaffoldedFields);
   const components = buildComponents(sections, scaffoldedFields);
-  const workItems = buildWorkItems(requirements, components.length > 0, scaffoldedFields);
+  const workItems = buildWorkItems(sections, requirements, components, risks, scaffoldedFields);
   const hitlGates = buildHitlGates(assumptions, risks, decisions, openQuestions, workItems, provenance);
   const documents = buildDocumentProjections();
   const slices = buildExecutionSlices(workItems);
@@ -292,9 +292,11 @@ function buildDecisions(
   scaffoldedFields: string[]
 ): readonly DecisionNode[] {
   const explicitDecisionLines = sections.decisions;
-  const inferredDecisionLines = [...sections.constraints, ...sections.mvp_scope, ...sections.goals].filter((line) =>
-    /\b(accepted|decided|decision|choose|chose|use|proposed|revisit|alternative|option|rationale)\b/iu.test(line)
-  );
+  const inferredDecisionLines = explicitDecisionLines.length > 0
+    ? []
+    : [...sections.constraints, ...sections.mvp_scope, ...sections.goals].filter((line) =>
+        /\b(accepted|decided|decision|choose|chose|use|proposed|revisit|alternative|option|rationale)\b/iu.test(line)
+      );
   const source = [
     ...explicitDecisionLines.map((line) => ({ line, defaultStatus: "accepted" as const })),
     ...inferredDecisionLines.map((line) => ({ line, defaultStatus: "proposed" as const }))
@@ -415,21 +417,50 @@ function buildOpenQuestions(
 ): readonly OpenQuestionNode[] {
   const questions = takeStable(sections.open_questions, 3);
   const source = questions.length > 0 ? questions : ["Confirm unresolved product, technical, and rollout decisions before applying the graph."];
+  const parsedQuestions = source.map(parseOpenQuestionLine);
 
   if (questions.length === 0) {
     scaffoldedFields.push("Open question oq-001 scaffolded because Open Questions was empty.");
   }
 
-  return source.map((question, index) => ({
+  return parsedQuestions.map((question, index) => ({
     id: stableId(`oq-${String(index + 1).padStart(3, "0")}`, "oq"),
     kind: "open_question",
-    title: titleFrom(question, `Open question ${index + 1}`),
+    title: titleFrom(question.question, `Open question ${index + 1}`),
     status: "active",
-    question: ensureQuestion(question),
-    priority: uncertaintyBlocksExecution(question) ? "high" : index === 0 ? "medium" : "low",
-    blocksExecution: uncertaintyBlocksExecution(question),
+    question: ensureQuestion(question.question),
+    priority: question.blocksExecution ? "high" : index === 0 ? "medium" : "low",
+    blocksExecution: question.blocksExecution,
     provenance
   }));
+}
+
+interface ParsedOpenQuestionLine {
+  readonly question: string;
+  readonly blocksExecution: boolean;
+}
+
+function parseOpenQuestionLine(line: string): ParsedOpenQuestionLine {
+  const explicitBlocking = explicitBlockingFieldFromLine(line);
+  const question = line.replace(/\s+\b(?:blocks execution|blocking)\s*:\s*(?:yes|no|true|false)\s*\.?\s*$/iu, "").trim();
+
+  return {
+    question: question || line,
+    blocksExecution: explicitBlocking ?? uncertaintyBlocksExecution(line)
+  };
+}
+
+function explicitBlockingFieldFromLine(line: string): boolean | undefined {
+  const value = /\b(?:blocks execution|blocking)\s*:\s*(?<value>yes|no|true|false)\s*\.?\s*$/iu.exec(line)?.groups?.value.toLowerCase();
+  if (value === "yes" || value === "true") {
+    return true;
+  }
+
+  if (value === "no" || value === "false") {
+    return false;
+  }
+
+  return undefined;
 }
 
 function buildRisks(
@@ -623,29 +654,42 @@ function buildComponents(sections: BriefSections, scaffoldedFields: string[]): r
   return components;
 }
 
+interface WorkItemDraft {
+  readonly title: string;
+  readonly sourceLine: string;
+  readonly acceptanceCriteria: readonly string[];
+  readonly validationMethods: WorkItemNode["validationMethods"];
+}
+
 function buildWorkItems(
+  sections: BriefSections,
   requirements: readonly RequirementNode[],
-  hasComponents: boolean,
+  components: readonly ComponentNode[],
+  risks: readonly RiskNode[],
   scaffoldedFields: string[]
 ): readonly WorkItemNode[] {
-  scaffoldedFields.push("Work Items are conservative scaffolds derived from brief sections, not an applied implementation plan.");
+  const sourceLines = workItemSourceLines(sections);
+  const validationMethods = validationMethodsFromBrief(sections);
+  const primaryRequirement = requirements[0]?.id ?? "req-001";
+  const componentContext = components.length > 0
+    ? ` Relevant components: ${components.map((component) => `${component.id} ${component.title}`).join(", ")}.`
+    : "";
+  const riskContext = risks.length > 0
+    ? ` Known risks to respect: ${risks.map((risk) => `${risk.id} ${risk.title}`).join(", ")}.`
+    : "";
 
-  const items = [
-    {
-      title: "Create canonical planning graph",
-      acceptanceCriteria: ["A valid Planning Graph exists with requirements, risks, open questions, Work Items, execution slices, and document projections."]
-    },
-    {
-      title: hasComponents ? "Implement component boundaries" : "Implement MVP workflow",
-      acceptanceCriteria: [hasComponents ? "The obvious components from the brief are represented in code or architecture notes." : "The MVP workflow described by the refined brief is implemented end to end."]
-    },
-    {
-      title: "Validate and review planning projections",
-      acceptanceCriteria: ["Validation passes and generated planning artifacts are reviewed before apply or execution."]
-    }
-  ];
+  if (sourceLines.length === 0) {
+    scaffoldedFields.push("Work Items scaffolded because MVP Scope and Success Criteria were empty.");
+  }
 
-  return items.map((item, index) => ({
+  const drafts = sourceLines.map((line): WorkItemDraft => ({
+    title: workItemTitleFromLine(line),
+    sourceLine: line,
+    acceptanceCriteria: acceptanceCriteriaForLine(line, sections.success_criteria),
+    validationMethods
+  }));
+
+  return drafts.map((item, index) => ({
     id: stableId(`wi-${String(index + 1).padStart(3, "0")}`, "wi"),
     kind: "work_item",
     title: item.title,
@@ -656,20 +700,131 @@ function buildWorkItems(
       labels: ["agent_eligible"],
       reasons: ["Dry-run proposal only; review before applying."]
     },
-    contextSummary: `${item.title} implements part of the refined brief MVP scope and traces to ${requirements[0]?.id ?? "req-001"}.`,
+    contextSummary: `${item.title} implements this MVP slice from the refined brief: ${trimSentence(item.sourceLine)}. It traces to ${primaryRequirement}.${componentContext}${riskContext}`,
     boundaryNotes: [
-      "Stay inside the accepted Work Item slice.",
+      `Stay inside this execution slice: ${trimSentence(item.sourceLine)}.`,
       "Do not add product behavior outside the refined brief MVP scope."
     ],
     acceptanceCriteria: item.acceptanceCriteria,
-    validationMethods: [
-      {
-        type: "manual_review",
-        expectedResult: `Safe manual validation: reviewer confirms ${item.title.toLowerCase()} satisfies ${requirements[0]?.id ?? "req-001"} without autonomous execution.`
-      }
-    ],
-    safeFailureGuidance: "Stop and request human review if required context, boundaries, or validation evidence is unclear."
+    validationMethods: item.validationMethods,
+    safeFailureGuidance: "Stop and report the exact missing context, failing validation, or unsafe assumption before changing unrelated scope."
   }));
+}
+
+function workItemSourceLines(sections: BriefSections): readonly string[] {
+  const mvpLines = sections.mvp_scope.filter((line) => !line.startsWith("TODO:"));
+  if (mvpLines.length >= 3) {
+    return takeStable(mvpLines, 5);
+  }
+
+  const candidates = takeStable(
+    [
+      ...mvpLines,
+      ...sections.success_criteria.filter((line) => !line.startsWith("TODO:")),
+      ...sections.constraints.filter((line) => /\b(test|validation|persist|store|auth|api|ui|cli|workflow|offline)\b/iu.test(line))
+    ],
+    5
+  ).slice(0, Math.max(3, Math.min(5, mvpLines.length + sections.success_criteria.length + sections.constraints.length)));
+
+  const fallback = [
+    "Implement the smallest coherent MVP workflow described by the refined brief.",
+    "Add deterministic validation for the MVP workflow.",
+    "Review the implementation against refined brief constraints."
+  ];
+  return candidates.length > 0 ? takeStable([...candidates, ...fallback], 3) : fallback;
+}
+
+function workItemTitleFromLine(line: string): string {
+  const todoNoun = /\btodo(?:s)?\b/iu.test(line) ? "todo" : undefined;
+
+  if (todoNoun && /\b(add|create|capture|new)\b/iu.test(line)) {
+    return "Implement add todo workflow";
+  }
+
+  if (todoNoun && /\b(edit|update|rename)\b/iu.test(line)) {
+    return "Implement edit todo workflow";
+  }
+
+  if (todoNoun && /\b(complete|completion|done|toggle|check off)\b/iu.test(line)) {
+    return "Implement todo completion workflow";
+  }
+
+  if (todoNoun && /\b(delete|remove|clear)\b/iu.test(line)) {
+    return "Implement delete todo workflow";
+  }
+
+  if (todoNoun && /\b(filter|search|sort|view)\b/iu.test(line)) {
+    return "Implement todo filtering workflow";
+  }
+
+  if (todoNoun && /\b(persist|save|storage|local storage|offline)\b/iu.test(line)) {
+    return "Implement todo persistence";
+  }
+
+  if (/\b(test|validation|validate|success criteria)\b/iu.test(line)) {
+    return `Validate ${implementationSubjectFromLine(line)}`;
+  }
+
+  const withoutLead = line
+    .replace(/^(users?|admins?|maintainers?|agents?)\s+(can|must|should|need to)\s+/iu, "")
+    .replace(/^(support|allow|enable|provide|build|create|implement|add)\s+/iu, "")
+    .replace(/[.:;]$/u, "")
+    .trim();
+  const subject = titleFrom(withoutLead, "MVP workflow").toLowerCase();
+  return `Implement ${subject}`;
+}
+
+function implementationSubjectFromLine(line: string): string {
+  if (/\btodo(?:s)?\b/iu.test(line)) {
+    return "todo MVP behavior";
+  }
+
+  if (/\bwork items?\b/iu.test(line)) {
+    return "generated Work Items";
+  }
+
+  return titleFrom(line, "MVP behavior").toLowerCase();
+}
+
+function acceptanceCriteriaForLine(line: string, successCriteria: readonly string[]): readonly string[] {
+  const criteria = [
+    `${trimSentence(line)} is implemented within the MVP scope.`,
+    ...successCriteria.slice(0, 2).map((criterion) => `Implementation supports success criterion: ${trimSentence(criterion)}.`),
+    "The slice has deterministic validation evidence before it is marked complete."
+  ];
+
+  return takeStable(criteria, criteria.length);
+}
+
+function validationMethodsFromBrief(sections: BriefSections): WorkItemNode["validationMethods"] {
+  const command = validationCommandFromBrief(sections);
+  if (command) {
+    return [
+      {
+        type: "command",
+        command,
+        expectedResult: `${command} passes for the scoped implementation slice.`
+      }
+    ];
+  }
+
+  return [
+    {
+      type: "manual_review",
+      expectedResult: "Safe manual validation: reviewer confirms the scoped behavior, boundaries, and acceptance criteria without autonomous execution."
+    }
+  ];
+}
+
+function validationCommandFromBrief(sections: BriefSections): string | undefined {
+  const text = [...sections.constraints, ...sections.success_criteria, ...sections.mvp_scope].join(" ");
+  const explicit = /\b(?:validation command|test command|run|use)\s*:\s*(?<command>npm\s+(?:test|run\s+(?:test|check|build|lint))|pnpm\s+(?:test|run\s+(?:test|check|build|lint))|yarn\s+(?:test|run\s+(?:test|check|build|lint))|bun\s+(?:test|run\s+(?:test|check|build|lint)))\b/iu.exec(text)?.groups?.command;
+  if (explicit) {
+    return explicit;
+  }
+
+  const inline = /\b(?<command>npm\s+(?:test|run\s+(?:test|check|build|lint))|pnpm\s+(?:test|run\s+(?:test|check|build|lint))|yarn\s+(?:test|run\s+(?:test|check|build|lint))|bun\s+(?:test|run\s+(?:test|check|build|lint)))\b/iu.exec(text)?.groups?.command;
+  return inline;
 }
 
 function buildDocumentProjections(): readonly DocumentProjectionNode[] {
@@ -747,12 +902,14 @@ function buildEdges(
 
   for (const decision of decisions) {
     if (decision.status === "accepted") {
-      edges.push({
-        source: workItems[0].id,
-        target: decision.id,
-        type: "references",
-        rationale: "Work Item references an accepted decision inferred from the refined brief."
-      });
+      for (const workItem of workItems) {
+        edges.push({
+          source: workItem.id,
+          target: decision.id,
+          type: "references",
+          rationale: "Work Item references an accepted decision inferred from the refined brief."
+        });
+      }
       continue;
     }
 
@@ -778,6 +935,15 @@ function buildEdges(
   }
 
   for (const risk of risks) {
+    for (const workItem of workItems) {
+      edges.push({
+        source: workItem.id,
+        target: risk.id,
+        type: "references",
+        rationale: "Work Item carries risk context inferred from the refined brief."
+      });
+    }
+
     edges.push({
       source: workItems[2]?.id ?? workItems[0].id,
       target: risk.id,
@@ -830,12 +996,14 @@ function buildEdges(
   }
 
   for (const component of components) {
-    edges.push({
-      source: workItems[1]?.id ?? workItems[0].id,
-      target: component.id,
-      type: "references",
-      rationale: "Implementation work references an obvious component from the refined brief."
-    });
+    for (const workItem of workItems) {
+      edges.push({
+        source: workItem.id,
+        target: component.id,
+        type: "references",
+        rationale: "Implementation work references an obvious component from the refined brief."
+      });
+    }
   }
 
   for (const document of documents) {

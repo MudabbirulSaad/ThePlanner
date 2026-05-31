@@ -745,6 +745,142 @@ describe("planner CLI use case wiring", () => {
     }
   });
 
+  it("validates generated Work Items without blockers from non-blocking Open Questions", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-open-question-markers-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile(
+        "planning/intake/refined-brief.md",
+        [
+          "# Refined Brief",
+          "",
+          "## Product Summary",
+          "",
+          "Build a planning assistant for local release coordination.",
+          "",
+          "## MVP Scope",
+          "",
+          "Generate Work Items for release preparation.",
+          "",
+          "## Success Criteria",
+          "",
+          "Generated Work Items show only genuine execution blockers.",
+          "",
+          "## Open Questions",
+          "",
+          "- Which release announcement wording should be used? Blocks execution: no",
+          "- Which credential rotation window must be answered before execution? Blocks execution: yes"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const plan = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        refinedBriefReader: new FileRefinedBriefReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+      expect(plan.exitCode).toBe(0);
+
+      const savedGraph = parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8")));
+      expect(savedGraph.nodes.filter((node) => node.kind === "open_question")).toEqual([
+        expect.objectContaining({ id: "oq-001", blocksExecution: false, priority: "medium" }),
+        expect.objectContaining({ id: "oq-002", blocksExecution: true, priority: "high" })
+      ]);
+      expect(savedGraph.nodes.filter((node) => node.kind === "hitl_gate")).toEqual([
+        expect.objectContaining({ id: "hitl-001", title: "Answer execution-blocking Open Question oq-002" })
+      ]);
+
+      const validate = await runPlannerCli(["validate", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        graphSchemaValidator: new FilePlanningGraphSchemaValidator(join(originalCwd, "planning/graph.schema.json")),
+        projectionWriter: { writeAll: async () => undefined }
+      });
+
+      expect(validate.exitCode).toBe(0);
+      const validation = JSON.parse(validate.stdout);
+      expect(validation).toMatchObject({ status: "pass", schemaStatus: "pass" });
+      expect(validation.readinessSnapshots["wi-001"].reasons).not.toContain(
+        "Depends on execution-blocking Open Question oq-001."
+      );
+      expect(validation.readinessSnapshots["wi-001"].reasons).toContain(
+        "Depends on execution-blocking Open Question oq-002."
+      );
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("exports execution-focused todo Work Items that are useful for prepare dry-run", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-todo-work-items-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("AGENTS.md", "# Repo Instructions\n\nStay inside the selected Work Item.\n", "utf8");
+      await writeFile(
+        "planning/intake/refined-brief.md",
+        await readFile(join(originalCwd, "tests/fixtures/intake/advanced-todo-refined-brief.md"), "utf8"),
+        "utf8"
+      );
+
+      const plan = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        refinedBriefReader: new FileRefinedBriefReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+      expect(plan.exitCode).toBe(0);
+
+      const savedGraph = parsePlanningGraphJson(JSON.parse(await readFile("planning/graph.json", "utf8")));
+      expect(savedGraph.nodes.filter((node) => node.kind === "work_item").map((node) => node.title)).toEqual([
+        "Implement add todo workflow",
+        "Implement edit todo workflow",
+        "Implement todo completion workflow",
+        "Implement todo filtering workflow",
+        "Implement todo persistence"
+      ]);
+      expect(validatePlanningGraph(savedGraph).readinessSnapshots["wi-001"]?.labels).toEqual([
+        "agent_eligible",
+        "afk_ready"
+      ]);
+
+      const exported = await runPlannerCli(["export", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: new FileProjectionWriter()
+      });
+      expect(exported.exitCode).toBe(0);
+
+      const workItemProjection = await readFile(
+        "planning/work-items/wi-001-implement-add-todo-workflow.md",
+        "utf8"
+      );
+      expect(workItemProjection).toContain("Users can add a todo with required text and optional notes");
+      expect(workItemProjection).toContain("## Validation\n\n- npm test");
+      expect(workItemProjection).toContain("## Safe Failure");
+
+      const prepared = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--dry-run", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => { throw new Error("prepare dry-run must not write projections"); } },
+        contextFileReader: new FileContextReader()
+      });
+      expect(prepared.exitCode).toBe(0);
+      const output = JSON.parse(prepared.stdout);
+      expect(output.validationCommands).toEqual(["npm test"]);
+      expect(output.content).toContain("Work Item: wi-001 - Implement add todo workflow");
+      expect(output.content).toContain("Users can add a todo with required text and optional notes");
+      expect(output.content).not.toContain("Depends on execution-blocking Open Question oq-001.");
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("refuses to apply a refined brief over an existing non-empty graph", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-plan-protect-"));
