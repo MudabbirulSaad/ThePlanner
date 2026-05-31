@@ -444,9 +444,14 @@ function compareReferenceOnlyField(
     return;
   }
 
-  const current = outgoing(graph, workItem.id, "references")
-    .filter((edge) => nodeKind(graph, edge.target) === kind)
-    .map((edge) => edge.target);
+  const current =
+    kind === "hitl_gate"
+      ? graph.nodes
+          .filter((node) => node.kind === "hitl_gate" && node.blocks.includes(workItem.id))
+          .map((node) => node.id)
+      : outgoing(graph, workItem.id, "references")
+          .filter((edge) => nodeKind(graph, edge.target) === kind)
+          .map((edge) => edge.target);
   const next = stringList(parsed.frontmatter[field]);
   if (!sameList(next, current)) {
     unsupportedProjectionEdits.push({

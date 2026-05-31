@@ -107,12 +107,97 @@ const prdProjection = renderDocumentProjection(
   graphWithOpenQuestionProjection.nodes.find((node) => node.kind === "document_projection") as DocumentProjectionNode
 );
 
+const graphWithHitlGate = parsePlanningGraphJson({
+  schema_version: "0.1.0",
+  graph_version: 1,
+  nodes: {
+    requirements: [{ id: "req-001", title: "Requirement", type: "functional", statement: "Do it.", status: "active" }],
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [
+      {
+        id: "oq-001",
+        title: "Who approves release",
+        status: "active",
+        question: "Who approves release?",
+        priority: "high",
+        blocks_execution: true
+      }
+    ],
+    hitl_gates: [
+      {
+        id: "hitl-001",
+        title: "Answer execution-blocking Open Question oq-001",
+        status: "active",
+        required_action: "Answer oq-001 before execution.",
+        blocks: ["wi-001"]
+      }
+    ],
+    components: [],
+    work_items: [
+      {
+        id: "wi-001",
+        title: "Work item",
+        execution_state: "backlog",
+        readiness_snapshot: {
+          graph_version: 1,
+          labels: ["agent_eligible", "hitl_gated", "blocked"],
+          reasons: ["Blocked by unresolved HITL Gate hitl-001."]
+        },
+        acceptance_criteria: ["Done"],
+        validation_methods: [{ type: "command", command: "npm test", expected_result: "Pass" }]
+      }
+    ],
+    document_projections: [],
+    execution_slices: []
+  },
+  edges: [
+    { source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." },
+    { source: "wi-001", target: "oq-001", type: "depends_on", rationale: "Question blocks execution." },
+    { source: "hitl-001", target: "oq-001", type: "references", rationale: "Open question caused the gate." }
+  ]
+});
+
+const hitlBlockedWorkItem = graphWithHitlGate.nodes.find(isWorkItemOne);
+if (!hitlBlockedWorkItem) {
+  throw new Error("HITL fixture work item missing.");
+}
+
+const hitlBlockedProjection = renderWorkItemProjection(graphWithHitlGate, hitlBlockedWorkItem);
+
 describe("graph reconciliation", () => {
   it("returns no patch for an unchanged Work Item projection", () => {
     const result = reconcileGraphProjections(graph, [projection]);
 
     expect(result.proposedPatches).toEqual([]);
     expect(result.conflicts).toEqual([]);
+  });
+
+  it("returns no drift for an unchanged generated Work Item projection with a HITL Gate", () => {
+    const result = reconcileGraphProjections(graphWithHitlGate, [hitlBlockedProjection]);
+
+    expect(result.proposedPatches).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.unsupportedProjectionEdits).toEqual([]);
+  });
+
+  it("keeps edited HITL Gate relationships visible as unsupported projection edits", () => {
+    const result = reconcileGraphProjections(graphWithHitlGate, [
+      {
+        ...hitlBlockedProjection,
+        content: hitlBlockedProjection.content.replace("hitl_gates: [hitl-001]", "hitl_gates: []")
+      }
+    ]);
+
+    expect(result.proposedPatches).toEqual([]);
+    expect(result.conflicts).toEqual([]);
+    expect(result.unsupportedProjectionEdits).toMatchObject([
+      {
+        nodeId: "wi-001",
+        field: "hitl_gates"
+      }
+    ]);
   });
 
   it("does not treat command-only validation Markdown as an expected result edit", () => {

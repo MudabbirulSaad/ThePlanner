@@ -1712,6 +1712,99 @@ describe("planner CLI use case wiring", () => {
     }
   });
 
+  it("reconciles cleanly after planning and fresh export with generated HITL Gates", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-clean-reconcile-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile(
+        "planning/intake/refined-brief.md",
+        [
+          "# Refined Brief",
+          "",
+          "## Product Summary",
+          "",
+          "Build a local release checklist planner.",
+          "",
+          "## MVP Scope",
+          "",
+          "- Generate release checklist Work Items.",
+          "",
+          "## Success Criteria",
+          "",
+          "- Fresh export reconciles without drift.",
+          "",
+          "## Open Questions",
+          "",
+          "- Who approves the release checklist before execution? Blocks execution: yes"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const plan = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        refinedBriefReader: new FileRefinedBriefReader(),
+        changeLogWriter: new FileChangeLogWriter()
+      });
+      expect(plan.exitCode).toBe(0);
+
+      const exported = await runPlannerCli(["export", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: new FileProjectionWriter(),
+        projectionReader: new FileProjectionReader()
+      });
+      expect(exported.exitCode).toBe(0);
+      const exportedPayload = JSON.parse(exported.stdout) as { readonly exported: readonly string[] };
+
+      const reconcile = await runPlannerCli(["reconcile", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        projectionReader: new FileProjectionReader()
+      });
+
+      expect(reconcile.exitCode).toBe(0);
+      expect(JSON.parse(reconcile.stdout)).toMatchObject({
+        applied: false,
+        proposedPatches: [],
+        conflicts: [],
+        unsupportedProjectionEdits: []
+      });
+
+      const workItemPath = exportedPayload.exported.find((path) => path.startsWith("planning/work-items/wi-001-"));
+      if (!workItemPath) {
+        throw new Error("Expected export to include wi-001 Work Item projection.");
+      }
+      const editedProjection = (await readFile(workItemPath, "utf8")).replace(
+        "hitl_gates: [hitl-001]",
+        "hitl_gates: []"
+      );
+      await writeFile(workItemPath, editedProjection, "utf8");
+
+      const editedReconcile = await runPlannerCli(["reconcile", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        projectionReader: new FileProjectionReader()
+      });
+
+      expect(editedReconcile.exitCode).toBe(0);
+      expect(JSON.parse(editedReconcile.stdout)).toMatchObject({
+        proposedPatches: [],
+        unsupportedProjectionEdits: [
+          {
+            nodeId: "wi-001",
+            field: "hitl_gates"
+          }
+        ]
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("refuses unsafe projection paths during filesystem export", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-export-unsafe-"));
