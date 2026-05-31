@@ -43,6 +43,7 @@ import type {
   SupportedTracker,
   TrackerSyncAdapter,
   ValidationCommandRunner,
+  WorkspaceChangeTracker,
   WorkspaceInitializer
 } from "./planner-use-cases.js";
 import type { ContextFileReader, SupportedAgent } from "./agent-context-bundle.js";
@@ -65,6 +66,7 @@ export interface PlannerCliServices {
   readonly runArtifactWriter?: AgentRunArtifactWriter;
   readonly agentRunner?: AgentRunner;
   readonly validationCommandRunner?: ValidationCommandRunner;
+  readonly workspaceChangeTracker?: WorkspaceChangeTracker;
   readonly trackerSyncAdapters?: readonly TrackerSyncAdapter[];
   readonly repoScanner?: RepoScanner;
   readonly defaultAgent?: SupportedAgent;
@@ -495,6 +497,7 @@ export async function runPlannerCli(
         runArtifactWriter: services.runArtifactWriter,
         agentRunner: services.agentRunner,
         validationCommandRunner: services.validationCommandRunner,
+        workspaceChangeTracker: services.workspaceChangeTracker,
         workItemId,
         agent,
         defaultValidationCommands: services.defaultValidationCommands,

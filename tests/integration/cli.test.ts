@@ -22,6 +22,7 @@ import {
   FileRefinedBriefReader,
   FileRefinedBriefWriter,
   FileRepoScanner,
+  FileWorkspaceChangeTracker,
   GitHubDryRunTrackerSyncAdapter,
   FileWorkspaceInitializer
 } from "../../src/adapters/index.js";
@@ -1450,6 +1451,71 @@ describe("planner CLI use case wiring", () => {
         "planning/runs/run-20260529-123456-wi-001/result.json"
       ]
     });
+  });
+
+  it("records files created by a fake agent run and surfaces them in review JSON", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-run-changed-files-"));
+    const runner: AgentRunner = {
+      run: async (input) => {
+        await mkdir("src/features", { recursive: true });
+        await writeFile("src/features/todo-workflow.md", `# Todo Workflow\n\nRun: ${input.runId}\n`, "utf8");
+        return {
+          command: ["fake-agent"],
+          exitCode: 0,
+          stdout: "created todo workflow\n",
+          stderr: ""
+        };
+      }
+    };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 0,
+        stdout: "validation ok\n",
+        stderr: ""
+      })
+    };
+
+    try {
+      process.chdir(workspace);
+      const services = {
+        graphRepository: { load: async () => graph },
+        projectionWriter: { writeAll: async () => undefined },
+        contextFileReader: { readIfExists: async () => undefined },
+        runArtifactReader: new FileAgentRunArtifactReader(),
+        runArtifactWriter: new FileAgentRunArtifactWriter(),
+        agentRunner: runner,
+        validationCommandRunner: validationRunner,
+        workspaceChangeTracker: new FileWorkspaceChangeTracker(),
+        currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+      };
+
+      const run = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], services);
+      const review = await runPlannerCli(["run", "review", "run-20260529-123456-wi-001", "--json"], services);
+
+      expect(run.exitCode).toBe(0);
+      expect(JSON.parse(await readFile("planning/runs/run-20260529-123456-wi-001/result.json", "utf8"))).toMatchObject({
+        changedFiles: ["src/features/todo-workflow.md"],
+        changedFileSummary: {
+          files: [{ path: "src/features/todo-workflow.md", status: "created" }],
+          created: ["src/features/todo-workflow.md"],
+          modified: [],
+          deleted: []
+        }
+      });
+      expect(review.exitCode).toBe(0);
+      expect(JSON.parse(review.stdout)).toMatchObject({
+        changedFiles: ["src/features/todo-workflow.md"],
+        changedFileSummary: {
+          files: [{ path: "src/features/todo-workflow.md", status: "created" }],
+          created: ["src/features/todo-workflow.md"]
+        }
+      });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
   });
 
   it.each(["claude", "gemini"] as const)("runs a ready Work Item through a fake %s runner from the CLI", async (agent) => {

@@ -280,6 +280,34 @@ export interface ValidationCommandRunner {
   readonly run: (input: ValidationCommandRunnerInput) => Promise<ValidationCommandResult>;
 }
 
+export type ChangedFileStatus = "created" | "modified" | "deleted";
+
+export interface ChangedFileEntry {
+  readonly path: string;
+  readonly status: ChangedFileStatus;
+}
+
+export interface ChangedFileSummary {
+  readonly files: readonly ChangedFileEntry[];
+  readonly created: readonly string[];
+  readonly modified: readonly string[];
+  readonly deleted: readonly string[];
+}
+
+export interface WorkspaceFileSnapshotEntry {
+  readonly path: string;
+  readonly hash: string;
+}
+
+export interface WorkspaceChangeSnapshot {
+  readonly files: readonly WorkspaceFileSnapshotEntry[];
+}
+
+export interface WorkspaceChangeTracker {
+  readonly captureSnapshot: () => Promise<WorkspaceChangeSnapshot>;
+  readonly summarizeChanges: (baseline: WorkspaceChangeSnapshot) => Promise<ChangedFileSummary>;
+}
+
 export interface TrackerIssueProposal {
   readonly workItemId: string;
   readonly title: string;
@@ -410,6 +438,8 @@ export interface AgentExecutionResult {
     readonly output?: ProcessOutputSummary;
     readonly error?: AgentRunnerError;
   };
+  readonly changedFiles: readonly string[];
+  readonly changedFileSummary: ChangedFileSummary;
   readonly message: string;
 }
 
@@ -425,6 +455,7 @@ export interface AgentRunReviewResult {
   readonly graphVersion: number;
   readonly generatedAt: string;
   readonly changedFiles: readonly string[];
+  readonly changedFileSummary: ChangedFileSummary;
   readonly runner: {
     readonly command: readonly string[];
     readonly exitCode: number;
@@ -1588,6 +1619,7 @@ export async function runAgentUseCase(args: {
   readonly runArtifactWriter: AgentRunArtifactWriter;
   readonly agentRunner: AgentRunner;
   readonly validationCommandRunner: ValidationCommandRunner;
+  readonly workspaceChangeTracker?: WorkspaceChangeTracker;
   readonly workItemId: string;
   readonly agent: string;
   readonly defaultValidationCommands?: readonly string[];
@@ -1645,6 +1677,7 @@ export async function runAgentUseCase(args: {
     validationCommands,
     validation: emptyValidation
   };
+  const changeBaseline = await args.workspaceChangeTracker?.captureSnapshot();
 
   const runnerResult = await args.agentRunner.run({
     agent,
@@ -1674,6 +1707,10 @@ export async function runAgentUseCase(args: {
       ...(result.error ? { error: result.error } : {})
     }))
   };
+  const changedFileSummary = changeBaseline
+    ? await args.workspaceChangeTracker!.summarizeChanges(changeBaseline)
+    : emptyChangedFileSummary();
+  const changedFiles = changedFileSummary.files.map((file) => file.path);
   const metadataWithValidation: AgentExecutionRunMetadata = {
     ...metadata,
     validation: validationSummary
@@ -1720,6 +1757,8 @@ export async function runAgentUseCase(args: {
       ...(runnerResult.output ? { output: runnerResult.output } : {}),
       ...(runnerResult.error ? { error: runnerResult.error } : {})
     },
+    changedFiles,
+    changedFileSummary,
     message:
       status === "completed"
         ? `Agent run completed, validation passed, and artifacts were written to ${runDirectory}.`
@@ -1768,6 +1807,7 @@ export async function reviewAgentRunUseCase(args: {
     graphVersion: summary.metadata.graphVersion,
     generatedAt: summary.metadata.generatedAt,
     changedFiles: summary.changedFiles,
+    changedFileSummary: summary.changedFileSummary,
     runner: summary.runner,
     validation: summary.metadata.validation,
     artifacts: summary.artifacts,
@@ -1975,11 +2015,13 @@ interface LoadedAgentRunSummary {
   readonly metadata: AgentExecutionRunMetadata;
   readonly runner: AgentExecutionResult["runner"];
   readonly changedFiles: readonly string[];
+  readonly changedFileSummary: ChangedFileSummary;
   readonly artifacts: readonly string[];
 }
 
 interface ParsedAgentExecutionResult extends Pick<AgentExecutionResult, "runId" | "runner" | "artifactPaths"> {
   readonly changedFiles: readonly string[];
+  readonly changedFileSummary: ChangedFileSummary;
 }
 
 async function loadAgentRunSummary(
@@ -2005,6 +2047,7 @@ async function loadAgentRunSummary(
     metadata,
     runner: result.runner,
     changedFiles: result.changedFiles,
+    changedFileSummary: result.changedFileSummary,
     artifacts: result.artifactPaths
   };
 }
@@ -2055,6 +2098,12 @@ function parseAgentExecutionRunMetadata(content: string): AgentExecutionRunMetad
 function parseAgentExecutionResult(content: string): ParsedAgentExecutionResult {
   const value = parseJsonObject(content, "run result");
   const runner = parseJsonObjectProperty(value.runner, "result.runner");
+  const changedFileSummary = readChangedFileSummary(value.changedFileSummary);
+  const changedFiles =
+    changedFileSummary?.files.map((file) => file.path) ??
+    readStringArrayProperty(value, "changedFiles") ??
+    readStringArrayProperty(value, "changed_files") ??
+    [];
 
   return {
     runId: readString(value.runId, "result.runId"),
@@ -2065,7 +2114,8 @@ function parseAgentExecutionResult(content: string): ParsedAgentExecutionResult 
       ...(runner.error ? { error: readRunnerError(runner.error) } : {})
     },
     artifactPaths: readStringArray(value.artifactPaths, "result.artifactPaths"),
-    changedFiles: readStringArrayProperty(value, "changedFiles") ?? readStringArrayProperty(value, "changed_files") ?? []
+    changedFiles,
+    changedFileSummary: changedFileSummary ?? changedFileSummaryFromPaths(changedFiles)
   };
 }
 
@@ -2189,6 +2239,51 @@ function readOutputSummary(value: unknown, path: string): ProcessOutputSummary {
     stdoutTruncated: readBoolean(output.stdoutTruncated, `${path}.stdoutTruncated`),
     stderrTruncated: readBoolean(output.stderrTruncated, `${path}.stderrTruncated`),
     outputLimitBytes: readInteger(output.outputLimitBytes, `${path}.outputLimitBytes`)
+  };
+}
+
+function readChangedFileSummary(value: unknown): ChangedFileSummary | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const summary = parseJsonObjectProperty(value, "result.changedFileSummary");
+  const files: ChangedFileEntry[] = readArray(summary.files, "result.changedFileSummary.files").map((entry, index) => {
+    const file = parseJsonObjectProperty(entry, `result.changedFileSummary.files[${index}]`);
+    const status = readString(file.status, `result.changedFileSummary.files[${index}].status`);
+    if (status !== "created" && status !== "modified" && status !== "deleted") {
+      throw new Error(`result.changedFileSummary.files[${index}].status must be created, modified, or deleted.`);
+    }
+
+    return {
+      path: readString(file.path, `result.changedFileSummary.files[${index}].path`),
+      status
+    };
+  });
+
+  return {
+    files,
+    created: readStringArray(summary.created, "result.changedFileSummary.created"),
+    modified: readStringArray(summary.modified, "result.changedFileSummary.modified"),
+    deleted: readStringArray(summary.deleted, "result.changedFileSummary.deleted")
+  };
+}
+
+function changedFileSummaryFromPaths(paths: readonly string[]): ChangedFileSummary {
+  return {
+    files: paths.map((path) => ({ path, status: "modified" })),
+    created: [],
+    modified: paths,
+    deleted: []
+  };
+}
+
+function emptyChangedFileSummary(): ChangedFileSummary {
+  return {
+    files: [],
+    created: [],
+    modified: [],
+    deleted: []
   };
 }
 

@@ -14,13 +14,16 @@ import type {
   AgentRunner,
   AgentRunnerInput,
   AgentRunnerResult,
+  ChangedFileSummary,
   GraphOperationProposerResult,
   ValidationCommandResult,
   ValidationCommandRunner,
   ValidationCommandRunnerInput,
   PlanningChangeLogEvent,
   ReviewerGraphOperationProposer,
-  ReviewerGraphOperationProposerInput
+  ReviewerGraphOperationProposerInput,
+  WorkspaceChangeSnapshot,
+  WorkspaceChangeTracker
 } from "../../src/application/index.js";
 
 class FakeArtifactWriter implements AgentRunArtifactWriter {
@@ -74,6 +77,21 @@ class FakeValidationRunner implements ValidationCommandRunner {
   }
 }
 
+class FakeWorkspaceChangeTracker implements WorkspaceChangeTracker {
+  public baselineCaptured = false;
+
+  public constructor(private readonly summary: ChangedFileSummary = { files: [], created: [], modified: [], deleted: [] }) {}
+
+  public async captureSnapshot(): Promise<WorkspaceChangeSnapshot> {
+    this.baselineCaptured = true;
+    return { files: [] };
+  }
+
+  public async summarizeChanges(_baseline: WorkspaceChangeSnapshot) {
+    return this.summary;
+  }
+}
+
 class FakeReviewerProposer implements ReviewerGraphOperationProposer {
   public input: ReviewerGraphOperationProposerInput | undefined;
 
@@ -118,6 +136,12 @@ const graph = parsePlanningGraphJson({
 describe("run agent use case", () => {
   it("runs a ready Work Item through a fake Codex runner and persists artifacts", async () => {
     const writer = new FakeArtifactWriter();
+    const changeTracker = new FakeWorkspaceChangeTracker({
+      files: [{ path: "src/features/todo-workflow.md", status: "created" }],
+      created: ["src/features/todo-workflow.md"],
+      modified: [],
+      deleted: []
+    });
     const runner = new FakeRunner({
       command: ["codex"],
       exitCode: 0,
@@ -134,6 +158,7 @@ describe("run agent use case", () => {
       runArtifactWriter: writer,
       agentRunner: runner,
       validationCommandRunner: validationRunner,
+      workspaceChangeTracker: changeTracker,
       workItemId: "wi-001",
       agent: "codex",
       timestamp: "2026-05-29T12:34:56.000Z"
@@ -146,8 +171,11 @@ describe("run agent use case", () => {
       runId: "run-20260529-123456-wi-001",
       runDirectory: "planning/runs/run-20260529-123456-wi-001",
       runner: { command: ["codex"], exitCode: 0 },
+      changedFiles: ["src/features/todo-workflow.md"],
+      changedFileSummary: { created: ["src/features/todo-workflow.md"], modified: [], deleted: [] },
       validation: { status: "pass", commands: [{ command: "npm test", exitCode: 0 }] }
     });
+    expect(changeTracker.baselineCaptured).toBe(true);
     expect(validationRunner.inputs).toEqual([
       {
         command: "npm test",
@@ -169,7 +197,41 @@ describe("run agent use case", () => {
     expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}")).toMatchObject({
       status: "completed",
       runner: { exitCode: 0 },
+      changedFiles: ["src/features/todo-workflow.md"],
+      changedFileSummary: { created: ["src/features/todo-workflow.md"], modified: [], deleted: [] },
       validation: { status: "pass" }
+    });
+  });
+
+  it("records an empty changed-file summary when no workspace changes are detected", async () => {
+    const writer = new FakeArtifactWriter();
+    const runner = new FakeRunner({
+      command: ["codex"],
+      exitCode: 0,
+      stdout: "ok\n",
+      stderr: ""
+    });
+    const validationRunner = new FakeValidationRunner([
+      { command: "npm test", exitCode: 0, stdout: "tests passed\n", stderr: "" }
+    ]);
+
+    const result = await runAgentUseCase({
+      graphRepository: { load: async () => graph },
+      contextFileReader: { readIfExists: async () => undefined },
+      runArtifactWriter: writer,
+      agentRunner: runner,
+      validationCommandRunner: validationRunner,
+      workspaceChangeTracker: new FakeWorkspaceChangeTracker(),
+      workItemId: "wi-001",
+      agent: "codex",
+      timestamp: "2026-05-29T12:34:56.000Z"
+    });
+
+    expect(result.changedFiles).toEqual([]);
+    expect(result.changedFileSummary).toEqual({ files: [], created: [], modified: [], deleted: [] });
+    expect(JSON.parse(writer.files.get("planning/runs/run-20260529-123456-wi-001/result.json") ?? "{}")).toMatchObject({
+      changedFiles: [],
+      changedFileSummary: { files: [], created: [], modified: [], deleted: [] }
     });
   });
 

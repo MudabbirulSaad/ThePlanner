@@ -17,6 +17,7 @@ import {
   FileWorkspaceInitializer,
   FilePlanningGraphSchemaValidator,
   FileRepoScanner,
+  FileWorkspaceChangeTracker,
   GitHubDryRunTrackerSyncAdapter,
   FileGraphOperationProposer,
   createPlanningPathMapper,
@@ -69,6 +70,7 @@ const result = await runPlannerCli(args, {
     timeoutMs: config.validationCommandTimeoutMs,
     outputLimitBytes: config.processOutputLimitBytes
   }),
+  workspaceChangeTracker: new FileWorkspaceChangeTracker(),
   trackerSyncAdapters: [new GitHubDryRunTrackerSyncAdapter()],
   repoScanner: new FileRepoScanner(),
   defaultAgent: config.defaultAgent,
