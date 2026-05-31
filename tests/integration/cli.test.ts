@@ -13,6 +13,7 @@ import {
   FileContextReader,
   FileGraphOperationProposalReader,
   FileGraphOperationUserAnswerReader,
+  FileGraphOperationProposer,
   FileIntakeIdeaReader,
   FilePlanningGraphRepository,
   FilePlanningGraphSchemaValidator,
@@ -2056,6 +2057,129 @@ describe("planner CLI use case wiring", () => {
       expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
       await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
       await expect(readdir("planning/work-items")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("dry-runs intake grilling with a fixture-backed proposer without live provider services", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-grill-fixture-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("planning/intake/refined-brief.md", "# Intake Brief\n\nRelease approval is unclear.\n", "utf8");
+      await writeFile(
+        "fixture-response.json",
+        `${JSON.stringify(
+          {
+            proposals: [
+              {
+                source_reference: "fixture-response.json#proposal-1",
+                rationale: "Ask the unresolved release-readiness question.",
+                operation: {
+                  operation: "add_open_question",
+                  open_question: {
+                    id: "oq-001",
+                    title: "Release readiness owner",
+                    question: "Who owns final release-readiness approval?",
+                    priority: "high",
+                    blocks_execution: true,
+                    provenance: {
+                      source_type: "planner_inference",
+                      source_reference: "fixture-response.json#proposal-1",
+                      created_by: "fixture proposer",
+                      confidence: "medium"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(
+        ["intake", "grill", "--from", "planning/intake/refined-brief.md", "--dry-run", "--json"],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: new FileProjectionWriter(),
+          refinedBriefReader: new FileRefinedBriefReader(),
+          graphOperationProposer: new FileGraphOperationProposer({
+            path: "fixture-response.json",
+            mode: "proposal-response"
+          }),
+          graphOperationUserAnswerReader: new FileGraphOperationUserAnswerReader()
+        }
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "candidate",
+        dryRun: true,
+        applied: false,
+        proposalCount: 1,
+        proposedOpenQuestions: [
+          {
+            id: "oq-001",
+            question: "Who owns final release-readiness approval?",
+            blocksExecution: true
+          }
+        ],
+        validation: { status: "pass" }
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readdir("planning/work-items")).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects invalid fixture-backed intake grilling output with parser errors", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-grill-invalid-fixture-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/intake", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile("planning/intake/refined-brief.md", "# Intake Brief\n\nRelease approval is unclear.\n", "utf8");
+      await writeFile("invalid-response.json", `${JSON.stringify({ proposals: {} }, null, 2)}\n`, "utf8");
+      const graphBefore = await readFile("planning/graph.json", "utf8");
+
+      const result = await runPlannerCli(
+        ["intake", "grill", "--from", "planning/intake/refined-brief.md", "--dry-run", "--json"],
+        {
+          graphRepository: new FilePlanningGraphRepository(),
+          projectionWriter: new FileProjectionWriter(),
+          refinedBriefReader: new FileRefinedBriefReader(),
+          graphOperationProposer: new FileGraphOperationProposer({
+            path: "invalid-response.json",
+            mode: "proposal-response"
+          }),
+          graphOperationUserAnswerReader: new FileGraphOperationUserAnswerReader()
+        }
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual({
+        status: "failed",
+        error: {
+          message:
+            "Graph Operation proposer response file invalid-response.json.proposals must be an array."
+        }
+      });
+      expect(await readFile("planning/graph.json", "utf8")).toBe(graphBefore);
+      await expect(readFile("planning/change-log.ndjson", "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });
