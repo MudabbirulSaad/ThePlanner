@@ -456,7 +456,7 @@ describe("run agent use case", () => {
     });
   });
 
-  it("reports prepared-only Work Item runs as not reviewable", async () => {
+  it("reports prepared-only Work Item runs as prepared but not executed", async () => {
     const runId = "run-20260529-123456-wi-001";
     const artifacts = new Map([
       [
@@ -476,15 +476,74 @@ describe("run agent use case", () => {
       ]
     ]);
 
-    await expect(
-      reviewAgentRunUseCase({
-        graphRepository: { load: async () => graph },
-        runArtifactReader: new FakeArtifactReader(artifacts),
-        runId: "wi-001"
-      })
-    ).rejects.toThrow(
-      "No reviewable executed runs found for Work Item wi-001. Prepared but not executed: run-20260529-123456-wi-001. Run the agent before review."
-    );
+    const result = await reviewAgentRunUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(artifacts),
+      runId: "wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "prepared_not_executed",
+      runId,
+      runDirectory: `planning/runs/${runId}`,
+      workItem: { id: "wi-001", title: "Run Codex" },
+      agent: "codex",
+      graphVersion: 1,
+      generatedAt: "2026-05-29T12:34:56.000Z",
+      validationCommands: ["npm test"],
+      artifacts: [
+        `planning/runs/${runId}/metadata.json`,
+        `planning/runs/${runId}/prompt.md`,
+        `planning/runs/${runId}/context.md`
+      ]
+    });
+  });
+
+  it("reports prepared-only run ids as prepared but not executed", async () => {
+    const runId = "run-20260529-123456-wi-001";
+    const artifacts = new Map([
+      [
+        `planning/runs/${runId}/metadata.json`,
+        `${JSON.stringify(
+          {
+            runId,
+            workItemId: "wi-001",
+            graphVersion: 1,
+            agent: "codex",
+            generatedAt: "2026-05-29T12:34:56.000Z",
+            validationCommands: ["npm test"]
+          },
+          null,
+          2
+        )}\n`
+      ]
+    ]);
+
+    const result = await reviewAgentRunUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(artifacts),
+      runId
+    });
+
+    expect(result).toMatchObject({
+      status: "prepared_not_executed",
+      runId,
+      message: "Run run-20260529-123456-wi-001 has prepared context but has not been executed. Run the agent before review, accept, or reject."
+    });
+  });
+
+  it("keeps executed failing runs reviewable", async () => {
+    const result = await reviewAgentRunUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(savedRunArtifacts({ validationStatus: "fail" })),
+      runId: "run-20260529-123456-wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "ready_for_review",
+      runId: "run-20260529-123456-wi-001",
+      validation: { status: "fail" }
+    });
   });
 
   it("reports missing Work Item run artifacts before review", async () => {

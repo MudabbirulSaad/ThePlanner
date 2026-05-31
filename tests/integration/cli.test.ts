@@ -1901,14 +1901,15 @@ describe("planner CLI use case wiring", () => {
         runArtifactReader: new FileAgentRunArtifactReader()
       });
 
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe("");
       expect(JSON.parse(result.stdout)).toMatchObject({
-        status: "failed",
-        error: {
-          message:
-            "No reviewable executed runs found for Work Item wi-001. Prepared but not executed: run-20260529-123456-wi-001. Run the agent before review."
-        }
+        status: "prepared_not_executed",
+        runId: "run-20260529-123456-wi-001",
+        workItem: { id: "wi-001", title: "Work" },
+        validationCommands: ["npm test"],
+        message:
+          "Run run-20260529-123456-wi-001 has prepared context but has not been executed. Run the agent before review, accept, or reject."
       });
     } finally {
       process.chdir(originalCwd);

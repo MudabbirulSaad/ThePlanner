@@ -455,7 +455,25 @@ export interface AgentExecutionResult {
   readonly message: string;
 }
 
-export interface AgentRunReviewResult {
+export type AgentRunReviewResult = AgentExecutedRunReviewResult | AgentPreparedRunReviewResult;
+
+export interface AgentPreparedRunReviewResult {
+  readonly status: "prepared_not_executed";
+  readonly runId: string;
+  readonly runDirectory: string;
+  readonly workItem: {
+    readonly id: string;
+    readonly title?: string;
+  };
+  readonly agent: SupportedAgent;
+  readonly graphVersion: number;
+  readonly generatedAt: string;
+  readonly validationCommands: readonly string[];
+  readonly artifacts: readonly string[];
+  readonly message: string;
+}
+
+export interface AgentExecutedRunReviewResult {
   readonly status: "ready_for_review";
   readonly runId: string;
   readonly runDirectory: string;
@@ -1805,12 +1823,29 @@ export async function reviewAgentRunUseCase(args: {
   readonly runArtifactReader: AgentRunArtifactReader;
   readonly runId: string;
 }): Promise<AgentRunReviewResult> {
-  const runId = await resolveReviewableRunId(args.runArtifactReader, args.runId);
-  const summary = await loadAgentRunSummary(args.runArtifactReader, runId);
+  const summary = await resolveReviewRunSummary(args.runArtifactReader, args.runId);
   const graph = await args.graphRepository.load();
   const workItem = graph.nodes.find(
     (node): node is WorkItemNode => node.kind === "work_item" && node.id === summary.metadata.workItemId
   );
+
+  if (summary.lifecycleState === "prepared_not_executed") {
+    return {
+      status: "prepared_not_executed",
+      runId: summary.metadata.runId,
+      runDirectory: summary.runDirectory,
+      workItem: {
+        id: summary.metadata.workItemId,
+        ...(workItem ? { title: workItem.title } : {})
+      },
+      agent: summary.metadata.agent,
+      graphVersion: summary.metadata.graphVersion,
+      generatedAt: summary.metadata.generatedAt,
+      validationCommands: summary.metadata.validationCommands,
+      artifacts: summary.artifacts,
+      message: `Run ${summary.metadata.runId} has prepared context but has not been executed. Run the agent before review, accept, or reject.`
+    };
+  }
 
   return {
     status: "ready_for_review",
@@ -2028,6 +2063,7 @@ export function createChangeLogEvent(args: {
 }
 
 interface LoadedAgentRunSummary {
+  readonly lifecycleState: "executed";
   readonly runDirectory: string;
   readonly metadata: AgentExecutionRunMetadata;
   readonly runner: AgentExecutionResult["runner"];
@@ -2036,9 +2072,55 @@ interface LoadedAgentRunSummary {
   readonly artifacts: readonly string[];
 }
 
+interface LoadedPreparedRunSummary {
+  readonly lifecycleState: "prepared_not_executed";
+  readonly runDirectory: string;
+  readonly metadata: AgentRunMetadata;
+  readonly artifacts: readonly string[];
+}
+
+type LoadedRunLifecycleSummary = LoadedAgentRunSummary | LoadedPreparedRunSummary;
+
 interface ParsedAgentExecutionResult extends Pick<AgentExecutionResult, "runId" | "runner" | "artifactPaths"> {
   readonly changedFiles: readonly string[];
   readonly changedFileSummary: ChangedFileSummary;
+}
+
+async function loadRunLifecycleSummary(
+  runArtifactReader: AgentRunArtifactReader,
+  runId: string,
+  artifactCandidate?: AgentRunArtifactCandidate
+): Promise<LoadedRunLifecycleSummary> {
+  if (!isAgentRunId(runId)) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+
+  const runDirectory = `planning/runs/${runId}`;
+  const metadataContent = await readRunArtifact(runArtifactReader, `${runDirectory}/metadata.json`, runId);
+  const metadataValue = parseJsonObject(metadataContent, "run metadata");
+  if (!("validation" in metadataValue)) {
+    const metadata = parseAgentRunMetadataFromObject(metadataValue);
+    if (metadata.runId !== runId) {
+      throw new Error(`Run artifact id mismatch for: ${runId}`);
+    }
+
+    return {
+      lifecycleState: "prepared_not_executed",
+      runDirectory,
+      metadata,
+      artifacts: [
+        `${runDirectory}/metadata.json`,
+        `${runDirectory}/prompt.md`,
+        `${runDirectory}/context.md`
+      ]
+    };
+  }
+
+  if (artifactCandidate && !artifactCandidate.hasResult) {
+    throw new Error(`Run ${runId} has execution metadata but no result artifact.`);
+  }
+
+  return await loadAgentRunSummaryFromMetadataValue(runArtifactReader, runId, runDirectory, metadataValue);
 }
 
 async function loadAgentRunSummary(
@@ -2055,6 +2137,15 @@ async function loadAgentRunSummary(
   if (!("validation" in metadataValue)) {
     throw new Error(`Run ${runId} was prepared but not executed; no reviewable result artifact exists.`);
   }
+  return await loadAgentRunSummaryFromMetadataValue(runArtifactReader, runId, runDirectory, metadataValue);
+}
+
+async function loadAgentRunSummaryFromMetadataValue(
+  runArtifactReader: AgentRunArtifactReader,
+  runId: string,
+  runDirectory: string,
+  metadataValue: Record<string, unknown>
+): Promise<LoadedAgentRunSummary> {
   const metadata = parseAgentExecutionRunMetadataFromObject(metadataValue);
   const result = parseAgentExecutionResult(await readRunArtifact(runArtifactReader, `${runDirectory}/result.json`, runId));
 
@@ -2063,6 +2154,7 @@ async function loadAgentRunSummary(
   }
 
   return {
+    lifecycleState: "executed",
     runDirectory,
     metadata,
     runner: result.runner,
@@ -2072,9 +2164,12 @@ async function loadAgentRunSummary(
   };
 }
 
-async function resolveReviewableRunId(runArtifactReader: AgentRunArtifactReader, targetId: string): Promise<string> {
+async function resolveReviewRunSummary(
+  runArtifactReader: AgentRunArtifactReader,
+  targetId: string
+): Promise<LoadedRunLifecycleSummary> {
   if (isAgentRunId(targetId)) {
-    return targetId;
+    return await loadRunLifecycleSummary(runArtifactReader, targetId);
   }
 
   if (!isWorkItemId(targetId)) {
@@ -2093,33 +2188,42 @@ async function resolveReviewableRunId(runArtifactReader: AgentRunArtifactReader,
   }
 
   const reviewableSummaries: LoadedAgentRunSummary[] = [];
-  const preparedRunIds = candidates
-    .filter((candidate) => candidate.hasMetadata && !candidate.hasResult)
-    .map((candidate) => candidate.runId);
+  const preparedSummaries: LoadedPreparedRunSummary[] = [];
 
   for (const candidate of candidates) {
-    if (!candidate.hasResult) {
+    if (!candidate.hasMetadata) {
       continue;
     }
 
-    const summary = await loadAgentRunSummary(runArtifactReader, candidate.runId);
-    if (summary.metadata.workItemId === targetId) {
+    const summary = await loadRunLifecycleSummary(runArtifactReader, candidate.runId, candidate);
+    if (summary.metadata.workItemId !== targetId) {
+      continue;
+    }
+
+    if (summary.lifecycleState === "executed") {
       reviewableSummaries.push(summary);
+    } else {
+      preparedSummaries.push(summary);
     }
   }
 
   if (reviewableSummaries.length === 0) {
-    const preparedSuffix =
-      preparedRunIds.length > 0 ? ` Prepared but not executed: ${preparedRunIds.join(", ")}.` : "";
-    throw new Error(`No reviewable executed runs found for Work Item ${targetId}.${preparedSuffix} Run the agent before review.`);
+    if (preparedSummaries.length === 0) {
+      throw new Error(`No reviewable executed runs found for Work Item ${targetId}. Run the agent before review.`);
+    }
+
+    preparedSummaries.sort(compareRunLifecycleSummaries);
+    return preparedSummaries[preparedSummaries.length - 1];
   }
 
-  reviewableSummaries.sort((left, right) => {
-    const generatedAtOrder = left.metadata.generatedAt.localeCompare(right.metadata.generatedAt);
-    return generatedAtOrder === 0 ? left.metadata.runId.localeCompare(right.metadata.runId) : generatedAtOrder;
-  });
+  reviewableSummaries.sort(compareRunLifecycleSummaries);
 
-  return reviewableSummaries[reviewableSummaries.length - 1].metadata.runId;
+  return reviewableSummaries[reviewableSummaries.length - 1];
+}
+
+function compareRunLifecycleSummaries(left: LoadedRunLifecycleSummary, right: LoadedRunLifecycleSummary): number {
+  const generatedAtOrder = left.metadata.generatedAt.localeCompare(right.metadata.generatedAt);
+  return generatedAtOrder === 0 ? left.metadata.runId.localeCompare(right.metadata.runId) : generatedAtOrder;
 }
 
 function isPassingAgentRunSummary(summary: LoadedAgentRunSummary): boolean {
@@ -2148,9 +2252,18 @@ async function readRunArtifact(runArtifactReader: AgentRunArtifactReader, path: 
 
 function parseAgentExecutionRunMetadataFromObject(value: Record<string, unknown>): AgentExecutionRunMetadata {
   const validation = readValidationSummary(value.validation);
+  const metadata = parseAgentRunMetadataFromObject(value);
+
+  return {
+    ...metadata,
+    validation
+  };
+}
+
+function parseAgentRunMetadataFromObject(value: Record<string, unknown>): AgentRunMetadata {
   const agent = value.agent;
   if (agent !== "codex" && agent !== "claude" && agent !== "gemini") {
-    throw new Error("Run metadata is not a runnable agent metadata artifact.");
+    throw new Error("Run metadata is not an agent metadata artifact.");
   }
 
   return {
@@ -2159,8 +2272,7 @@ function parseAgentExecutionRunMetadataFromObject(value: Record<string, unknown>
     graphVersion: readInteger(value.graphVersion, "metadata.graphVersion"),
     agent,
     generatedAt: readString(value.generatedAt, "metadata.generatedAt"),
-    validationCommands: readStringArray(value.validationCommands, "metadata.validationCommands"),
-    validation
+    validationCommands: readStringArray(value.validationCommands, "metadata.validationCommands")
   };
 }
 
