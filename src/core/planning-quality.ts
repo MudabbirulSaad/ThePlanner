@@ -20,12 +20,15 @@ export interface PlanningQualityResult {
   readonly findings: readonly PlanningQualityFinding[];
 }
 
-const placeholderPattern = /\b(TODO|TBD|placeholder|fill\s+in|not\s+captured|not\s+specified|to\s+be\s+defined)\b/iu;
+const placeholderPattern = /\b(?:TODO|TBD)\b/u;
+const placeholderPhrasePattern = /\b(?:placeholder|fill\s+in|not\s+captured|not\s+specified|to\s+be\s+defined)\b/iu;
 const fallbackWorkItemTitles = new Set([
   "Implement the smallest coherent MVP workflow described by the refined brief.",
   "Add deterministic validation for the MVP workflow.",
   "Review the implementation against refined brief constraints."
 ]);
+const scaffoldManualValidationPattern =
+  /^Safe manual validation: reviewer confirms the scoped behavior, boundaries, and acceptance criteria without autonomous execution\.$/u;
 
 export function assessPlanningQuality(graph: PlanningGraph): PlanningQualityResult {
   const findings: PlanningQualityFinding[] = [
@@ -147,7 +150,15 @@ function isGenericComponent(component: ComponentNode): boolean {
   );
 }
 
-function isFallbackWorkItem(workItem: WorkItemNode): boolean {
+export function isScaffoldedProductIntent(intent: ProductIntent | undefined): boolean {
+  return Boolean(
+    !intent ||
+      intent.scaffoldNotes.length > 0 ||
+      productIntentFieldEntries(intent).some(([, values]) => values.some(hasPlaceholderText))
+  );
+}
+
+export function isFallbackWorkItem(workItem: WorkItemNode): boolean {
   return (
     fallbackWorkItemTitles.has(workItem.title) ||
     hasPlaceholderText(workItem.title) ||
@@ -156,8 +167,17 @@ function isFallbackWorkItem(workItem: WorkItemNode): boolean {
   );
 }
 
-function hasPlaceholderText(value: string): boolean {
-  return placeholderPattern.test(value);
+export function hasScaffoldManualValidation(workItem: WorkItemNode): boolean {
+  return workItem.validationMethods.some(
+    (method) =>
+      method.type === "manual_review" &&
+      (scaffoldManualValidationPattern.test(method.expectedResult.trim()) ||
+        /without autonomous execution/iu.test(method.expectedResult))
+  );
+}
+
+export function hasPlaceholderText(value: string): boolean {
+  return placeholderPattern.test(value) || placeholderPhrasePattern.test(value);
 }
 
 function isDecision(node: { readonly kind: string }): node is DecisionNode {

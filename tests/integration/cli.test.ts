@@ -365,6 +365,22 @@ describe("planner CLI use case wiring", () => {
     expect(result.stdout).toContain("wi-001: Missing boundaries/non-goals");
   });
 
+  it("prints scaffold readiness blockers in validation output", async () => {
+    const scaffoldGraph = parsePlanningGraphJson(
+      JSON.parse(await readFile("tests/fixtures/planning-quality/scaffold-heavy-graph.json", "utf8"))
+    );
+
+    const result = await runPlannerCli(["validate"], {
+      graphRepository: { load: async () => scaffoldGraph },
+      projectionWriter: { writeAll: async () => undefined }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("wi-001: Scaffolded Work Item");
+    expect(result.stdout).toContain("wi-001: Scaffolded Product Intent");
+    expect(result.stdout).toContain("wi-001: Scaffolded validation");
+  });
+
   it("reports schema errors and skips semantic validation for malformed graph shape", async () => {
     const originalCwd = process.cwd();
     const workspace = await mkdtemp(join(tmpdir(), "planner-schema-fail-"));

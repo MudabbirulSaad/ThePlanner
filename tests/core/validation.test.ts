@@ -26,6 +26,10 @@ function afkCandidateRaw() {
   return { raw, workItem };
 }
 
+function loadPlanningQualityFixture(path: string) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
 describe("graph validation and readiness", () => {
   it("validates the clean starter workspace graph", () => {
     const graph = parsePlanningGraphJson(JSON.parse(readFileSync("planning/graph.json", "utf8")));
@@ -114,6 +118,64 @@ describe("graph validation and readiness", () => {
     expect(result.readinessSnapshots["wi-006"]?.reasons).toEqual([
       "Missing safe-failure guidance: add safe_failure_guidance that tells the agent how to stop or report uncertainty."
     ]);
+  });
+
+  it("keeps scaffolded fallback Work Items out of AFK readiness", () => {
+    const result = validatePlanningGraph(
+      parsePlanningGraphJson(loadPlanningQualityFixture("tests/fixtures/planning-quality/scaffold-heavy-graph.json"))
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-001"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSummary.afkReady).not.toContain("wi-001");
+    expect(result.readinessSnapshots["wi-001"]?.reasons).toEqual(
+      expect.arrayContaining([
+        "Scaffolded Product Intent: replace TODO placeholders before marking Work Items AFK-ready.",
+        "Scaffolded Work Item: wi-001 must be replaced with a concrete, bounded execution slice before AFK-ready.",
+        "Scaffolded validation: replace deterministic safe-manual-validation text with executable validation or explicit user-authored manual review."
+      ])
+    );
+  });
+
+  it("keeps TODO-derived Product Intent Work Items out of AFK readiness", () => {
+    const raw = loadPlanningQualityFixture("tests/fixtures/planning-quality/rich-graph.json");
+    raw.product_intent.goals = ["TODO: Define product goals."];
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-001"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-001"]?.reasons).toContain(
+      "Scaffolded Product Intent: replace TODO placeholders before marking Work Items AFK-ready."
+    );
+  });
+
+  it("keeps placeholder-provenance Work Items out of AFK readiness", () => {
+    const raw = loadPlanningQualityFixture("tests/fixtures/planning-quality/rich-graph.json");
+    raw.nodes.work_items[0].provenance = {
+      source_type: "planner_inference",
+      source_reference: "TODO refined brief",
+      created_by: "theplanner plan --dry-run",
+      confidence: "medium"
+    };
+
+    const result = validatePlanningGraph(parsePlanningGraphJson(raw));
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-001"]?.labels).toEqual(["agent_eligible", "blocked"]);
+    expect(result.readinessSnapshots["wi-001"]?.reasons).toContain(
+      "Placeholder provenance: wi-001 still comes from deterministic planner inference and needs explicit confirmation before AFK-ready."
+    );
+  });
+
+  it("keeps confirmed Work Items AFK-ready", () => {
+    const result = validatePlanningGraph(
+      parsePlanningGraphJson(loadPlanningQualityFixture("tests/fixtures/planning-quality/rich-graph.json"))
+    );
+
+    expect(result.status).toBe("pass");
+    expect(result.readinessSnapshots["wi-001"]?.labels).toEqual(["agent_eligible", "afk_ready"]);
+    expect(result.readinessSummary.afkReady).toEqual(["wi-001"]);
   });
 
   it("rejects unsupported Planning Graph schema versions", () => {

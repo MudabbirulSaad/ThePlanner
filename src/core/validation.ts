@@ -12,6 +12,12 @@ import type {
   WorkItemNode
 } from "./graph.js";
 import { isSupportedPlanningGraphSchemaVersion } from "./graph.js";
+import {
+  hasPlaceholderText,
+  hasScaffoldManualValidation,
+  isFallbackWorkItem,
+  isScaffoldedProductIntent
+} from "./planning-quality.js";
 
 export type ValidationStatus = "pass" | "warning" | "error";
 export type SchemaValidationStatus = "not_run" | "pass" | "warning" | "error";
@@ -349,6 +355,30 @@ function afkReadinessBlockers(graph: PlanningGraph, workItem: WorkItemNode): rea
     reasons.push("Missing safe-failure guidance: add safe_failure_guidance that tells the agent how to stop or report uncertainty.");
   }
 
+  reasons.push(...scaffoldReadinessBlockers(graph, workItem));
+
+  return reasons;
+}
+
+function scaffoldReadinessBlockers(graph: PlanningGraph, workItem: WorkItemNode): readonly string[] {
+  const reasons: string[] = [];
+
+  if (graph.productIntent && isScaffoldedProductIntent(graph.productIntent)) {
+    reasons.push("Scaffolded Product Intent: replace TODO placeholders before marking Work Items AFK-ready.");
+  }
+
+  if (isFallbackWorkItem(workItem)) {
+    reasons.push(`Scaffolded Work Item: ${workItem.id} must be replaced with a concrete, bounded execution slice before AFK-ready.`);
+  }
+
+  if (hasScaffoldManualValidation(workItem)) {
+    reasons.push("Scaffolded validation: replace deterministic safe-manual-validation text with executable validation or explicit user-authored manual review.");
+  }
+
+  if (isPlaceholderProvenance(workItem)) {
+    reasons.push(`Placeholder provenance: ${workItem.id} still comes from deterministic planner inference and needs explicit confirmation before AFK-ready.`);
+  }
+
   return reasons;
 }
 
@@ -360,6 +390,15 @@ function hasAfkValidation(workItem: WorkItemNode): boolean {
 
     return method.type === "manual_review" && /\bsafe manual validation\b/i.test(method.expectedResult);
   });
+}
+
+function isPlaceholderProvenance(workItem: WorkItemNode): boolean {
+  return Boolean(
+    workItem.provenance?.sourceType === "planner_inference" &&
+      workItem.provenance.confidence !== "high" &&
+      (hasPlaceholderText(workItem.provenance.sourceReference) ||
+        /theplanner plan --dry-run/iu.test(workItem.provenance.createdBy))
+  );
 }
 
 function afkBlockers(
