@@ -159,6 +159,7 @@ export interface GraphOperationProposerProposal {
   readonly operation: unknown;
   readonly sourceReference?: string;
   readonly rationale?: string;
+  readonly approved?: boolean;
 }
 
 export interface GraphOperationProposerResult {
@@ -877,6 +878,7 @@ export async function planFromBriefDryRunUseCase(args: {
 }): Promise<{
   readonly status: "proposed";
   readonly dryRun: true;
+  readonly planningMode: "deterministic_scaffold";
   readonly sourcePath: string;
   readonly graph: unknown;
   readonly validation: GraphValidationResult;
@@ -893,11 +895,12 @@ export async function planFromBriefDryRunUseCase(args: {
   return {
     status: "proposed",
     dryRun: true,
+    planningMode: "deterministic_scaffold",
     sourcePath: args.fromPath,
     graph: serializePlanningGraphJson(proposal.graph),
     validation,
     scaffoldedFields: proposal.scaffoldedFields,
-    message: "Dry run only. No planning files were written; review this graph before a future apply step."
+    message: "Planning mode: deterministic scaffold. Dry run only. No planning files were written; review this graph before a future apply step."
   };
 }
 
@@ -912,6 +915,7 @@ export async function planFromBriefApplyUseCase(args: {
   readonly status: "applied";
   readonly dryRun: false;
   readonly applied: true;
+  readonly planningMode: "deterministic_scaffold";
   readonly sourcePath: string;
   readonly graph: unknown;
   readonly validation: GraphValidationResult;
@@ -958,12 +962,197 @@ export async function planFromBriefApplyUseCase(args: {
     status: "applied",
     dryRun: false,
     applied: true,
+    planningMode: "deterministic_scaffold",
     sourcePath: args.fromPath,
     graph: serializePlanningGraphJson(proposal.graph),
     validation,
     scaffoldedFields: proposal.scaffoldedFields,
     event,
-    message: "Applied graph proposal to planning/graph.json and recorded planning/change-log.ndjson."
+    message: "Planning mode: deterministic scaffold. Applied graph proposal to planning/graph.json and recorded planning/change-log.ndjson."
+  };
+}
+
+export async function planFromBriefProposedOperationsDryRunUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly refinedBriefReader: RefinedBriefReader;
+  readonly proposer: GraphOperationProposer;
+  readonly fromPath: string;
+}): Promise<
+  Awaited<ReturnType<typeof proposeGraphOperationsUseCase>> & {
+    readonly planningMode: "graph_operation_proposals";
+    readonly sourcePath: string;
+  }
+> {
+  const intakeBrief = {
+    sourcePath: args.fromPath,
+    content: await args.refinedBriefReader.read(args.fromPath)
+  };
+  const result = await proposeGraphOperationsUseCase({
+    graphRepository: args.graphRepository,
+    proposer: args.proposer,
+    intakeBrief
+  });
+
+  return {
+    ...result,
+    planningMode: "graph_operation_proposals",
+    sourcePath: args.fromPath,
+    message: `Planning mode: graph operation proposals. ${result.message}`
+  };
+}
+
+export async function planFromBriefProposedOperationsApplyUseCase(args: {
+  readonly graphRepository: GraphRepository;
+  readonly refinedBriefReader: RefinedBriefReader;
+  readonly proposer: GraphOperationProposer;
+  readonly changeLogWriter: ChangeLogWriter;
+  readonly fromPath: string;
+  readonly approved?: boolean;
+  readonly actor?: string;
+  readonly timestamp?: string;
+}): Promise<{
+  readonly status: "applied" | "rejected";
+  readonly dryRun: false;
+  readonly applied: boolean;
+  readonly planningMode: "graph_operation_proposals";
+  readonly sourcePath: string;
+  readonly proposalCount: number;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly validation: GraphValidationResult;
+  readonly graph?: unknown;
+  readonly event?: PlanningChangeLogEvent;
+  readonly message: string;
+}> {
+  if (!args.graphRepository.save) {
+    throw new Error("Applying proposed planning operations requires a writable graph repository.");
+  }
+
+  const graph = await args.graphRepository.load();
+  const intakeBrief = {
+    sourcePath: args.fromPath,
+    content: await args.refinedBriefReader.read(args.fromPath)
+  };
+  const proposerResult = await args.proposer.propose({
+    graph: deepCloneApplicationValue(graph),
+    intakeBrief: deepCloneApplicationValue(intakeBrief)
+  });
+  const results: GraphOperationDryRunResult[] = [];
+  const proposedOperations: GraphOperationProposalSummary[] = [];
+  let candidateGraph = deepCloneApplicationValue(graph);
+  let approvalRequired = false;
+
+  for (const [index, proposal] of proposerResult.proposals.entries()) {
+    const sourcePath = proposal.sourceReference ?? `${args.fromPath}#proposal-${index + 1}`;
+    let parsedOperation: ProposedGraphOperation;
+    try {
+      parsedOperation = parseProposedGraphOperationJson(proposal.operation);
+    } catch (error) {
+      const result = rejectedGraphOperationParseResult({
+        graph: candidateGraph,
+        sourcePath,
+        error
+      });
+      results.push(result);
+
+      return rejectedPlanGraphOperationProposalResult({
+        graph,
+        candidateGraph,
+        sourcePath: args.fromPath,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "Planning mode: graph operation proposals. At least one proposed Graph Operation was rejected. No planning files were written."
+      });
+    }
+
+    const result = dryRunGraphOperationCandidate({
+      graph: candidateGraph,
+      operation: parsedOperation,
+      sourcePath
+    });
+    results.push(result);
+    proposedOperations.push(summarizeProposedOperation(sourcePath, parsedOperation, result));
+
+    if (result.status === "rejected") {
+      return rejectedPlanGraphOperationProposalResult({
+        graph,
+        candidateGraph,
+        sourcePath: args.fromPath,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "Planning mode: graph operation proposals. At least one proposed Graph Operation was rejected. No planning files were written."
+      });
+    }
+
+    approvalRequired = approvalRequired || result.approvalRequired;
+    if (result.approvalRequired && args.approved !== true && proposal.approved !== true) {
+      return rejectedPlanGraphOperationProposalResult({
+        graph,
+        candidateGraph,
+        sourcePath: args.fromPath,
+        proposalCount: proposerResult.proposals.length,
+        proposedOperations,
+        results,
+        message: "Planning mode: graph operation proposals. Approval-required Graph Operation was refused. No planning files were written."
+      });
+    }
+
+    candidateGraph = parsePlanningGraphJson(result.candidateGraph);
+  }
+
+  const validation = validatePlanningGraph(candidateGraph);
+  if (validation.status === "error") {
+    return {
+      status: "rejected",
+      dryRun: false,
+      applied: false,
+      planningMode: "graph_operation_proposals",
+      sourcePath: args.fromPath,
+      proposalCount: proposerResult.proposals.length,
+      graphVersionBefore: graph.graphVersion,
+      graphVersionAfter: candidateGraph.graphVersion,
+      proposedOperations,
+      results,
+      validation,
+      message: "Planning mode: graph operation proposals. Candidate graph failed validation. No planning files were written."
+    };
+  }
+
+  const affectedNodeIds = uniqueStrings(proposedOperations.flatMap((operation) => operation.affectedNodeIds));
+  const event = createChangeLogEvent({
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: candidateGraph.graphVersion,
+    affectedNodeIds,
+    actor: args.actor ?? "planner",
+    timestamp: args.timestamp ?? new Date().toISOString(),
+    operationType: "plan_graph_operation_proposals",
+    approvalStatus: approvalRequired ? "approved" : "not_required",
+    summary: `Applied ${proposerResult.proposals.length} planning Graph Operation proposal(s) from ${args.fromPath}.`,
+    provenanceReference: `theplanner plan --from ${args.fromPath} --apply`
+  });
+
+  await args.changeLogWriter.append(event);
+  await args.graphRepository.save(candidateGraph);
+
+  return {
+    status: "applied",
+    dryRun: false,
+    applied: true,
+    planningMode: "graph_operation_proposals",
+    sourcePath: args.fromPath,
+    proposalCount: proposerResult.proposals.length,
+    graphVersionBefore: graph.graphVersion,
+    graphVersionAfter: candidateGraph.graphVersion,
+    proposedOperations,
+    results,
+    validation,
+    graph: serializePlanningGraphJson(candidateGraph),
+    event,
+    message: "Planning mode: graph operation proposals. Applied proposed Graph Operations to planning/graph.json and recorded planning/change-log.ndjson."
   };
 }
 
@@ -1188,6 +1377,44 @@ function rejectedReviewerPolicyResult(args: {
     ],
     validation: validatePlanningGraph(args.graph),
     message: "Reviewer Graph Operation was rejected before candidate validation. No planning files were written."
+  };
+}
+
+function rejectedPlanGraphOperationProposalResult(args: {
+  readonly graph: PlanningGraph;
+  readonly candidateGraph: PlanningGraph;
+  readonly sourcePath: string;
+  readonly proposalCount: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly message: string;
+}): {
+  readonly status: "rejected";
+  readonly dryRun: false;
+  readonly applied: false;
+  readonly planningMode: "graph_operation_proposals";
+  readonly sourcePath: string;
+  readonly proposalCount: number;
+  readonly graphVersionBefore: number;
+  readonly graphVersionAfter: number;
+  readonly proposedOperations: readonly GraphOperationProposalSummary[];
+  readonly results: readonly GraphOperationDryRunResult[];
+  readonly validation: GraphValidationResult;
+  readonly message: string;
+} {
+  return {
+    status: "rejected",
+    dryRun: false,
+    applied: false,
+    planningMode: "graph_operation_proposals",
+    sourcePath: args.sourcePath,
+    proposalCount: args.proposalCount,
+    graphVersionBefore: args.graph.graphVersion,
+    graphVersionAfter: args.candidateGraph.graphVersion,
+    proposedOperations: args.proposedOperations,
+    results: args.results,
+    validation: validatePlanningGraph(args.candidateGraph),
+    message: args.message
   };
 }
 

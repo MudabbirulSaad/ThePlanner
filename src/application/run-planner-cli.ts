@@ -14,6 +14,8 @@ import {
   decideAgentRunUseCase,
   planFromBriefApplyUseCase,
   planFromBriefDryRunUseCase,
+  planFromBriefProposedOperationsApplyUseCase,
+  planFromBriefProposedOperationsDryRunUseCase,
   prepareAgentContextBundleUseCase,
   repoScanDryRunUseCase,
   refineIntakeBriefUseCase,
@@ -243,23 +245,42 @@ export async function runPlannerCli(
 
     const dryRun = rest.includes("--dry-run");
     const apply = rest.includes("--apply");
+    const scaffold = rest.includes("--scaffold");
     if (dryRun === apply) {
       return fail("theplanner plan requires exactly one of --dry-run or --apply", json);
     }
 
     try {
-      const result = apply
-        ? await planFromBriefApplyUseCase({
-            graphRepository: services.graphRepository,
-            refinedBriefReader: services.refinedBriefReader,
-            changeLogWriter: requireChangeLogWriter(services.changeLogWriter),
-            fromPath: from
-          })
-        : await planFromBriefDryRunUseCase({
-            refinedBriefReader: services.refinedBriefReader,
-            fromPath: from
-          });
-      return render(result.validation.status === "error" ? 1 : 0, result, json);
+      const useProposer = Boolean(services.graphOperationProposer && !scaffold);
+      const result = useProposer
+        ? apply
+          ? await planFromBriefProposedOperationsApplyUseCase({
+              graphRepository: services.graphRepository,
+              refinedBriefReader: services.refinedBriefReader,
+              proposer: services.graphOperationProposer!,
+              changeLogWriter: requireChangeLogWriter(services.changeLogWriter),
+              fromPath: from,
+              approved: rest.includes("--approved"),
+              timestamp: services.currentTimestamp?.()
+            })
+          : await planFromBriefProposedOperationsDryRunUseCase({
+              graphRepository: services.graphRepository,
+              refinedBriefReader: services.refinedBriefReader,
+              proposer: services.graphOperationProposer!,
+              fromPath: from
+            })
+        : apply
+          ? await planFromBriefApplyUseCase({
+              graphRepository: services.graphRepository,
+              refinedBriefReader: services.refinedBriefReader,
+              changeLogWriter: requireChangeLogWriter(services.changeLogWriter),
+              fromPath: from
+            })
+          : await planFromBriefDryRunUseCase({
+              refinedBriefReader: services.refinedBriefReader,
+              fromPath: from
+            });
+      return render(result.validation.status === "error" || result.status === "rejected" ? 1 : 0, result, json);
     } catch (error) {
       return renderError(error, json);
     }

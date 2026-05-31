@@ -70,6 +70,24 @@ const graph = parsePlanningGraphJson({
   edges: [{ source: "wi-001", target: "req-001", type: "satisfies", rationale: "Traceability." }]
 });
 
+const emptyPlanningGraph = parsePlanningGraphJson({
+  schema_version: "0.1.0",
+  graph_version: 1,
+  nodes: {
+    requirements: [],
+    decisions: [],
+    assumptions: [],
+    risks: [],
+    open_questions: [],
+    hitl_gates: [],
+    components: [],
+    work_items: [],
+    document_projections: [],
+    execution_slices: []
+  },
+  edges: []
+});
+
 function expectJsonError(result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string }, message: string): void {
   expect(result.exitCode).toBe(1);
   expect(result.stderr).toBe("");
@@ -222,6 +240,228 @@ describe("planner CLI use case wiring", () => {
     });
 
     expectJsonError(result, "theplanner plan requires --from <file>");
+  });
+
+  it("routes plan dry-run through a configured GraphOperationProposer", async () => {
+    let saveCalled = false;
+    const proposer = new CliFakeProposer((input) => {
+      expect(input.intakeBrief).toEqual({
+        sourcePath: "planning/intake/refined-brief.md",
+        content: "# Refined Brief\n\nBuild the planner."
+      });
+
+      return {
+        proposals: [
+          {
+            operation: {
+              operation: "add_requirement",
+              requirement: {
+                id: "req-001",
+                title: "Plan through proposals",
+                type: "functional",
+                status: "active",
+                statement: "The normal planning path must use proposed Graph Operations when configured.",
+                provenance: {
+                  source_type: "planner_inference",
+                  source_reference: "planning/intake/refined-brief.md#requirements",
+                  created_by: "test proposer",
+                  confidence: "medium"
+                }
+              }
+            }
+          }
+        ]
+      };
+    });
+
+    const result = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--dry-run", "--json"], {
+      graphRepository: {
+        load: async () => emptyPlanningGraph,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      projectionWriter: { writeAll: async () => undefined },
+      refinedBriefReader: { read: async () => "# Refined Brief\n\nBuild the planner." },
+      graphOperationProposer: proposer
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "candidate",
+      dryRun: true,
+      applied: false,
+      planningMode: "graph_operation_proposals",
+      sourcePath: "planning/intake/refined-brief.md",
+      proposalCount: 1,
+      proposedOperations: [{ operation: "AddRequirement", approvalRequired: false }],
+      validation: { status: "pass" }
+    });
+    expect(saveCalled).toBe(false);
+  });
+
+  it("clearly reports deterministic scaffold mode when plan has no proposer", async () => {
+    const result = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--dry-run", "--json"], {
+      graphRepository: { load: async () => emptyPlanningGraph },
+      projectionWriter: { writeAll: async () => undefined },
+      refinedBriefReader: { read: async () => "# Refined Brief\n\nBuild a CLI-first planner." }
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "proposed",
+      dryRun: true,
+      planningMode: "deterministic_scaffold",
+      sourcePath: "planning/intake/refined-brief.md",
+      validation: { status: "pass" }
+    });
+  });
+
+  it("rejects invalid plan proposals without saving graph or change-log files", async () => {
+    let saveCalled = false;
+    let changeLogCalled = false;
+    const proposer = new CliFakeProposer(() => ({
+      proposals: [
+        {
+          operation: {
+            operation: "add_open_question",
+            open_question: {
+              id: "oq-001",
+              title: "Missing provenance",
+              question: "Which target user should the planner optimize for?",
+              priority: "high",
+              blocks_execution: true
+            }
+          }
+        }
+      ]
+    }));
+
+    const result = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"], {
+      graphRepository: {
+        load: async () => emptyPlanningGraph,
+        save: async () => {
+          saveCalled = true;
+        }
+      },
+      projectionWriter: { writeAll: async () => undefined },
+      changeLogWriter: {
+        append: async () => {
+          changeLogCalled = true;
+        }
+      },
+      refinedBriefReader: { read: async () => "# Refined Brief\n\nTarget user is unclear." },
+      graphOperationProposer: proposer
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "rejected",
+      applied: false,
+      planningMode: "graph_operation_proposals",
+      results: [
+        {
+          status: "rejected",
+          operation: "AddOpenQuestion",
+          operationErrors: [{ code: "graph_operation_provenance_required", nodeId: "oq-001" }]
+        }
+      ]
+    });
+    expect(saveCalled).toBe(false);
+    expect(changeLogCalled).toBe(false);
+  });
+
+  it("refuses approval-required plan proposals unless explicit approval is present", async () => {
+    let saveCount = 0;
+    let changeLogCount = 0;
+    const proposer = new CliFakeProposer(() => ({
+      proposals: [
+        {
+          operation: {
+            operation: "add_decision",
+            decision: {
+              id: "dec-001",
+              title: "Use proposer planning by default",
+              status: "accepted",
+              selected_option: "Use GraphOperationProposer when configured",
+              rationale: "Configured proposers should be the normal high-quality planning path.",
+              rejected_alternatives: ["Always scaffold"],
+              unresolved_questions: [],
+              provenance: {
+                source_type: "planner_inference",
+                source_reference: "issues/053-route-normal-planning-through-graph-operation-proposals.md#hitl-decision",
+                created_by: "test proposer",
+                confidence: "high"
+              }
+            },
+            approval_classification: {
+              category: "commitment_changing",
+              rationale: "Accepted planning decisions change product commitments."
+            }
+          }
+        }
+      ]
+    }));
+
+    const result = await runPlannerCli(["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--json"], {
+      graphRepository: {
+        load: async () => emptyPlanningGraph,
+        save: async () => {
+          saveCount += 1;
+        }
+      },
+      projectionWriter: { writeAll: async () => undefined },
+      changeLogWriter: { append: async () => { changeLogCount += 1; } },
+      refinedBriefReader: { read: async () => "# Refined Brief\n\nPrefer proposer-backed planning." },
+      graphOperationProposer: proposer
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: "rejected",
+      applied: false,
+      planningMode: "graph_operation_proposals",
+      proposedOperations: [
+        {
+          operation: "AddDecision",
+          approvalRequired: true,
+          approvalCategory: "commitment_changing"
+        }
+      ],
+      message: "Planning mode: graph operation proposals. Approval-required Graph Operation was refused. No planning files were written."
+    });
+    expect(saveCount).toBe(0);
+    expect(changeLogCount).toBe(0);
+
+    const approvedResult = await runPlannerCli(
+      ["plan", "--from", "planning/intake/refined-brief.md", "--apply", "--approved", "--json"],
+      {
+        graphRepository: {
+          load: async () => emptyPlanningGraph,
+          save: async () => {
+            saveCount += 1;
+          }
+        },
+        projectionWriter: { writeAll: async () => undefined },
+        changeLogWriter: { append: async () => { changeLogCount += 1; } },
+        refinedBriefReader: { read: async () => "# Refined Brief\n\nPrefer proposer-backed planning." },
+        graphOperationProposer: proposer,
+        currentTimestamp: () => "2026-05-31T00:00:00.000Z"
+      }
+    );
+
+    expect(approvedResult.exitCode).toBe(0);
+    expect(JSON.parse(approvedResult.stdout)).toMatchObject({
+      status: "applied",
+      applied: true,
+      planningMode: "graph_operation_proposals",
+      event: {
+        operation_type: "plan_graph_operation_proposals",
+        approval_status: "approved"
+      }
+    });
+    expect(saveCount).toBe(1);
+    expect(changeLogCount).toBe(1);
   });
 
   it("returns JSON error envelopes for service-wiring errors", async () => {
