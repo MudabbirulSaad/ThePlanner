@@ -125,6 +125,24 @@ export class FileChangeLogWriter implements ChangeLogWriter {
 export class FileAgentRunArtifactWriter implements AgentRunArtifactWriter {
   public constructor(private readonly mapPath: (path: string) => string = identityPath) {}
 
+  public async allocateRunId(baseRunId: string): Promise<string> {
+    for (let suffix = 0; ; suffix += 1) {
+      const runId = suffix === 0 ? baseRunId : `${baseRunId}-${suffix + 1}`;
+      const resolvedPath = resolve(this.mapPath(`planning/runs/${runId}`));
+      await mkdir(dirname(resolvedPath), { recursive: true });
+
+      try {
+        await mkdir(resolvedPath);
+        return runId;
+      } catch (error) {
+        if (isAlreadyExists(error)) {
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
   public async writeAll(files: readonly AgentRunArtifactFile[]): Promise<readonly string[]> {
     const writtenPaths: string[] = [];
     for (const file of files) {

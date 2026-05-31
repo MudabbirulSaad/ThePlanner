@@ -215,6 +215,7 @@ export interface AgentRunArtifactFile {
 }
 
 export interface AgentRunArtifactWriter {
+  readonly allocateRunId?: (baseRunId: string) => Promise<string> | string;
   readonly writeAll: (files: readonly AgentRunArtifactFile[]) => Promise<readonly string[] | void>;
 }
 
@@ -1516,7 +1517,7 @@ export async function prepareAgentContextBundleUseCase(args: {
     }
 
     const generatedAt = args.timestamp ?? new Date().toISOString();
-    const runId = createAgentRunId(generatedAt, workItem.id);
+    const runId = await allocateAgentRunId(args.runArtifactWriter, generatedAt, workItem.id);
     const runDirectory = `planning/runs/${runId}`;
     const metadataPath = `${runDirectory}/metadata.json`;
     const promptPath = `${runDirectory}/prompt.md`;
@@ -1620,7 +1621,7 @@ export async function runAgentUseCase(args: {
   });
 
   const generatedAt = args.timestamp ?? new Date().toISOString();
-  const runId = createAgentRunId(generatedAt, workItem.id);
+  const runId = await allocateAgentRunId(args.runArtifactWriter, generatedAt, workItem.id);
   const runDirectory = `planning/runs/${runId}`;
   const metadataPath = `${runDirectory}/metadata.json`;
   const promptPath = `${runDirectory}/prompt.md`;
@@ -1985,7 +1986,7 @@ async function loadAgentRunSummary(
   runArtifactReader: AgentRunArtifactReader,
   runId: string
 ): Promise<LoadedAgentRunSummary> {
-  if (!/^run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}$/u.test(runId)) {
+  if (!/^run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}(?:-[0-9]+)?$/u.test(runId)) {
     throw new Error(`Invalid run id: ${runId}`);
   }
 
@@ -2269,6 +2270,15 @@ function createAgentRunId(timestamp: string, workItemId: string): string {
 
   const compactTimestamp = date.toISOString().replace(/[-:]/gu, "").replace(/\.\d{3}Z$/u, "").replace("T", "-");
   return `run-${compactTimestamp}-${workItemId}`;
+}
+
+async function allocateAgentRunId(
+  runArtifactWriter: AgentRunArtifactWriter,
+  timestamp: string,
+  workItemId: string
+): Promise<string> {
+  const baseRunId = createAgentRunId(timestamp, workItemId);
+  return runArtifactWriter.allocateRunId ? await runArtifactWriter.allocateRunId(baseRunId) : baseRunId;
 }
 
 function parseSupportedAgent(agent: string): SupportedAgent {

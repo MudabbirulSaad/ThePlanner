@@ -1249,6 +1249,86 @@ describe("planner CLI use case wiring", () => {
     }
   });
 
+  it("allocates a suffixed run id when prepare apply and run collide in the same second", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-run-id-collision-"));
+    const runnerInputs: string[] = [];
+    const runner: AgentRunner = {
+      run: async (input) => {
+        runnerInputs.push(input.runId);
+        return {
+          command: ["codex"],
+          exitCode: 0,
+          stdout: `ran ${input.runId}\n`,
+          stderr: ""
+        };
+      }
+    };
+    const validationRunner: ValidationCommandRunner = {
+      run: async (input) => ({
+        command: input.command,
+        exitCode: 0,
+        stdout: `validated ${input.runId}\n`,
+        stderr: ""
+      })
+    };
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning", { recursive: true });
+      await writeFile("AGENTS.md", "# Repo Instructions\n\nStay in scope.\n", "utf8");
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+
+      const prepare = await runPlannerCli(["prepare", "wi-001", "--agent", "codex", "--apply", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => { throw new Error("prepare apply must not write projections"); } },
+        contextFileReader: new FileContextReader(),
+        runArtifactWriter: new FileAgentRunArtifactWriter(),
+        currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+      });
+      const run = await runPlannerCli(["run", "wi-001", "--agent", "codex", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        contextFileReader: new FileContextReader(),
+        runArtifactWriter: new FileAgentRunArtifactWriter(),
+        agentRunner: runner,
+        validationCommandRunner: validationRunner,
+        currentTimestamp: () => "2026-05-29T12:34:56.000Z"
+      });
+
+      expect(prepare.exitCode).toBe(0);
+      expect(run.exitCode).toBe(0);
+      expect(JSON.parse(prepare.stdout)).toMatchObject({
+        runId: "run-20260529-123456-wi-001",
+        bundlePath: "planning/runs/run-20260529-123456-wi-001/prompt.md"
+      });
+      expect(JSON.parse(run.stdout)).toMatchObject({
+        runId: "run-20260529-123456-wi-001-2",
+        runDirectory: "planning/runs/run-20260529-123456-wi-001-2",
+        artifactPaths: [
+          "planning/runs/run-20260529-123456-wi-001-2/metadata.json",
+          "planning/runs/run-20260529-123456-wi-001-2/prompt.md",
+          "planning/runs/run-20260529-123456-wi-001-2/context.md",
+          "planning/runs/run-20260529-123456-wi-001-2/runner-stdout.log",
+          "planning/runs/run-20260529-123456-wi-001-2/runner-stderr.log",
+          "planning/runs/run-20260529-123456-wi-001-2/validation-stdout.log",
+          "planning/runs/run-20260529-123456-wi-001-2/validation-stderr.log",
+          "planning/runs/run-20260529-123456-wi-001-2/result.json"
+        ]
+      });
+      expect(runnerInputs).toEqual(["run-20260529-123456-wi-001-2"]);
+      await expect(readFile("planning/runs/run-20260529-123456-wi-001/metadata.json", "utf8")).resolves.toContain(
+        "\"runId\": \"run-20260529-123456-wi-001\""
+      );
+      await expect(readFile("planning/runs/run-20260529-123456-wi-001-2/result.json", "utf8")).resolves.toContain(
+        "\"runId\": \"run-20260529-123456-wi-001-2\""
+      );
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
   it("returns useful prepare errors for missing and blocked Work Items", async () => {
     const blockedGraph = parsePlanningGraphJson({
       schema_version: "0.1.0",
