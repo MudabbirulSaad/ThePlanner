@@ -1735,6 +1735,41 @@ describe("planner CLI use case wiring", () => {
         )}\n`,
         "utf8"
       );
+      await mkdir("planning/runs/run-20260530-111111-wi-001", { recursive: true });
+      await writeFile(
+        "planning/runs/run-20260530-111111-wi-001/metadata.json",
+        `${JSON.stringify(
+          {
+            runId: "run-20260530-111111-wi-001",
+            workItemId: "wi-001",
+            graphVersion: 1,
+            agent: "codex",
+            generatedAt: "2026-05-30T11:11:11.000Z",
+            validationCommands: ["npm test"],
+            validation: { status: "pass", commands: [{ command: "npm test", exitCode: 0 }] }
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+      await writeFile(
+        "planning/runs/run-20260530-111111-wi-001/result.json",
+        `${JSON.stringify(
+          {
+            status: "completed",
+            runId: "run-20260530-111111-wi-001",
+            runner: { command: ["codex"], exitCode: 0 },
+            artifactPaths: [
+              "planning/runs/run-20260530-111111-wi-001/metadata.json",
+              "planning/runs/run-20260530-111111-wi-001/result.json"
+            ]
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
 
       const services = {
         graphRepository: new FilePlanningGraphRepository(),
@@ -1744,6 +1779,7 @@ describe("planner CLI use case wiring", () => {
         currentTimestamp: () => "2026-05-29T13:00:00.000Z"
       };
       const review = await runPlannerCli(["run", "review", "run-20260529-123456-wi-001", "--json"], services);
+      const workItemReview = await runPlannerCli(["run", "review", "wi-001", "--json"], services);
       const accept = await runPlannerCli(["run", "accept", "run-20260529-123456-wi-001", "--json"], services);
 
       expect(review.exitCode).toBe(0);
@@ -1754,6 +1790,12 @@ describe("planner CLI use case wiring", () => {
         runner: { exitCode: 0 },
         validation: { status: "pass" }
       });
+      expect(workItemReview.exitCode).toBe(0);
+      expect(JSON.parse(workItemReview.stdout)).toMatchObject({
+        status: "ready_for_review",
+        runId: "run-20260530-111111-wi-001",
+        workItem: { id: "wi-001", title: "Work" }
+      });
       expect(accept.exitCode).toBe(0);
       expect(JSON.parse(accept.stdout)).toMatchObject({
         status: "accepted",
@@ -1762,6 +1804,52 @@ describe("planner CLI use case wiring", () => {
       });
       const events = (await readFile("planning/change-log.ndjson", "utf8")).trim().split("\n").map((line) => JSON.parse(line));
       expect(events).toMatchObject([{ operation_type: "agent_run_accepted", approval_status: "accepted" }]);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(workspace, { force: true, recursive: true });
+    }
+  });
+
+  it("reports prepared-only Work Item runs from run review JSON", async () => {
+    const originalCwd = process.cwd();
+    const workspace = await mkdtemp(join(tmpdir(), "planner-run-review-prepared-"));
+
+    try {
+      process.chdir(workspace);
+      await mkdir("planning/runs/run-20260529-123456-wi-001", { recursive: true });
+      await writeFile("planning/graph.json", `${JSON.stringify(serializePlanningGraphJson(graph), null, 2)}\n`, "utf8");
+      await writeFile(
+        "planning/runs/run-20260529-123456-wi-001/metadata.json",
+        `${JSON.stringify(
+          {
+            runId: "run-20260529-123456-wi-001",
+            workItemId: "wi-001",
+            graphVersion: 1,
+            agent: "codex",
+            generatedAt: "2026-05-29T12:34:56.000Z",
+            validationCommands: ["npm test"]
+          },
+          null,
+          2
+        )}\n`,
+        "utf8"
+      );
+
+      const result = await runPlannerCli(["run", "review", "wi-001", "--json"], {
+        graphRepository: new FilePlanningGraphRepository(),
+        projectionWriter: { writeAll: async () => undefined },
+        runArtifactReader: new FileAgentRunArtifactReader()
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toBe("");
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "failed",
+        error: {
+          message:
+            "No reviewable executed runs found for Work Item wi-001. Prepared but not executed: run-20260529-123456-wi-001. Run the agent before review."
+        }
+      });
     } finally {
       process.chdir(originalCwd);
       await rm(workspace, { force: true, recursive: true });

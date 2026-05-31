@@ -49,6 +49,22 @@ class FakeArtifactReader implements AgentRunArtifactReader {
 
     return content;
   }
+
+  public async listRunArtifactsForWorkItem(workItemId: string) {
+    const runIds = new Set<string>();
+    for (const path of this.files.keys()) {
+      const match = /^planning\/runs\/(?<runId>run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}(?:-[0-9]+)?)\//u.exec(path);
+      if (match?.groups?.runId.endsWith(workItemId) || match?.groups?.runId.includes(`${workItemId}-`)) {
+        runIds.add(match.groups.runId);
+      }
+    }
+
+    return [...runIds].map((runId) => ({
+      runId,
+      hasMetadata: this.files.has(`planning/runs/${runId}/metadata.json`),
+      hasResult: this.files.has(`planning/runs/${runId}/result.json`)
+    }));
+  }
 }
 
 class FakeRunner implements AgentRunner {
@@ -414,6 +430,73 @@ describe("run agent use case", () => {
     });
   });
 
+  it("resolves a Work Item ID to the latest executed run for human review", async () => {
+    const artifacts = new Map<string, string>([
+      ...savedRunArtifacts({
+        runId: "run-20260529-123456-wi-001",
+        generatedAt: "2026-05-29T12:34:56.000Z"
+      }),
+      ...savedRunArtifacts({
+        runId: "run-20260530-111111-wi-001",
+        generatedAt: "2026-05-30T11:11:11.000Z"
+      })
+    ]);
+
+    const result = await reviewAgentRunUseCase({
+      graphRepository: { load: async () => graph },
+      runArtifactReader: new FakeArtifactReader(artifacts),
+      runId: "wi-001"
+    });
+
+    expect(result).toMatchObject({
+      status: "ready_for_review",
+      runId: "run-20260530-111111-wi-001",
+      runDirectory: "planning/runs/run-20260530-111111-wi-001",
+      workItem: { id: "wi-001", title: "Run Codex" }
+    });
+  });
+
+  it("reports prepared-only Work Item runs as not reviewable", async () => {
+    const runId = "run-20260529-123456-wi-001";
+    const artifacts = new Map([
+      [
+        `planning/runs/${runId}/metadata.json`,
+        `${JSON.stringify(
+          {
+            runId,
+            workItemId: "wi-001",
+            graphVersion: 1,
+            agent: "codex",
+            generatedAt: "2026-05-29T12:34:56.000Z",
+            validationCommands: ["npm test"]
+          },
+          null,
+          2
+        )}\n`
+      ]
+    ]);
+
+    await expect(
+      reviewAgentRunUseCase({
+        graphRepository: { load: async () => graph },
+        runArtifactReader: new FakeArtifactReader(artifacts),
+        runId: "wi-001"
+      })
+    ).rejects.toThrow(
+      "No reviewable executed runs found for Work Item wi-001. Prepared but not executed: run-20260529-123456-wi-001. Run the agent before review."
+    );
+  });
+
+  it("reports missing Work Item run artifacts before review", async () => {
+    await expect(
+      reviewAgentRunUseCase({
+        graphRepository: { load: async () => graph },
+        runArtifactReader: new FakeArtifactReader(new Map()),
+        runId: "wi-001"
+      })
+    ).rejects.toThrow("No run artifacts found for Work Item wi-001. Run the agent before reviewing this Work Item.");
+  });
+
   it("dry-runs a passing reviewer proposal to update Work Item execution state without saving", async () => {
     let saveCalled = false;
     const proposer = new FakeReviewerProposer({
@@ -678,21 +761,28 @@ describe("run agent use case", () => {
   });
 });
 
-function savedRunArtifacts(options?: { readonly validationStatus?: "pass" | "fail" }): ReadonlyMap<string, string> {
-  const runDirectory = "planning/runs/run-20260529-123456-wi-001";
+function savedRunArtifacts(options?: {
+  readonly validationStatus?: "pass" | "fail";
+  readonly runId?: string;
+  readonly workItemId?: string;
+  readonly generatedAt?: string;
+}): ReadonlyMap<string, string> {
+  const runId = options?.runId ?? "run-20260529-123456-wi-001";
+  const workItemId = options?.workItemId ?? "wi-001";
+  const runDirectory = `planning/runs/${runId}`;
   const validationStatus = options?.validationStatus ?? "pass";
   const metadata = {
-    runId: "run-20260529-123456-wi-001",
-    workItemId: "wi-001",
+    runId,
+    workItemId,
     graphVersion: 1,
     agent: "codex",
-    generatedAt: "2026-05-29T12:34:56.000Z",
+    generatedAt: options?.generatedAt ?? "2026-05-29T12:34:56.000Z",
     validationCommands: ["npm test"],
     validation: { status: validationStatus, commands: [{ command: "npm test", exitCode: validationStatus === "pass" ? 0 : 1 }] }
   };
   const result = {
     status: validationStatus === "pass" ? "completed" : "failed",
-    runId: "run-20260529-123456-wi-001",
+    runId,
     runner: { command: ["codex"], exitCode: 0 },
     validation: metadata.validation,
     changedFiles: ["src/example.ts", "tests/example.test.ts"],

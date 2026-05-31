@@ -3,6 +3,7 @@ import { basename, dirname, resolve } from "node:path";
 
 import { parsePlanningGraphJson, serializePlanningGraphJson } from "../../application/index.js";
 import type {
+  AgentRunArtifactCandidate,
   AgentRunArtifactFile,
   AgentRunArtifactReader,
   AgentRunArtifactWriter,
@@ -171,6 +172,40 @@ export class FileAgentRunArtifactReader implements AgentRunArtifactReader {
       throw error;
     }
   }
+
+  public async listRunArtifactsForWorkItem(workItemId: string): Promise<readonly AgentRunArtifactCandidate[]> {
+    const runsRoot = this.mapPath("planning/runs");
+    let entries;
+    try {
+      entries = await readdir(resolve(runsRoot), { withFileTypes: true });
+    } catch (error) {
+      if (isNotFound(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    const runIdPattern = new RegExp(`^run-[0-9]{8}-[0-9]{6}-${escapeRegExp(workItemId)}(?:-[0-9]+)?$`, "u");
+    const candidates: AgentRunArtifactCandidate[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !runIdPattern.test(entry.name)) {
+        continue;
+      }
+
+      const runDirectory = `planning/runs/${entry.name}`;
+      const [hasMetadata, hasResult] = await Promise.all([
+        fileExists(this.mapPath(`${runDirectory}/metadata.json`)),
+        fileExists(this.mapPath(`${runDirectory}/result.json`))
+      ]);
+      candidates.push({
+        runId: entry.name,
+        hasMetadata,
+        hasResult
+      });
+    }
+
+    return candidates.sort((left, right) => left.runId.localeCompare(right.runId));
+  }
 }
 
 export class FileIntakeIdeaReader implements IntakeIdeaReader {
@@ -299,6 +334,22 @@ export class FileWorkspaceInitializer implements WorkspaceInitializer {
 
 function identityPath(path: string): string {
   return path;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await readFile(resolve(path), "utf8");
+    return true;
+  } catch (error) {
+    if (isNotFound(error)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function resolveProjectionPath(path: string): Promise<string> {

@@ -216,6 +216,12 @@ export interface AgentRunArtifactFile {
   readonly content: string;
 }
 
+export interface AgentRunArtifactCandidate {
+  readonly runId: string;
+  readonly hasMetadata: boolean;
+  readonly hasResult: boolean;
+}
+
 export interface AgentRunArtifactWriter {
   readonly allocateRunId?: (baseRunId: string) => Promise<string> | string;
   readonly writeAll: (files: readonly AgentRunArtifactFile[]) => Promise<readonly string[] | void>;
@@ -223,6 +229,9 @@ export interface AgentRunArtifactWriter {
 
 export interface AgentRunArtifactReader {
   readonly read: (path: string) => Promise<string>;
+  readonly listRunArtifactsForWorkItem?: (
+    workItemId: string
+  ) => Promise<readonly AgentRunArtifactCandidate[]> | readonly AgentRunArtifactCandidate[];
 }
 
 export type RunnableAgent = SupportedAgent;
@@ -1795,7 +1804,8 @@ export async function reviewAgentRunUseCase(args: {
   readonly runArtifactReader: AgentRunArtifactReader;
   readonly runId: string;
 }): Promise<AgentRunReviewResult> {
-  const summary = await loadAgentRunSummary(args.runArtifactReader, args.runId);
+  const runId = await resolveReviewableRunId(args.runArtifactReader, args.runId);
+  const summary = await loadAgentRunSummary(args.runArtifactReader, runId);
   const graph = await args.graphRepository.load();
   const workItem = graph.nodes.find(
     (node): node is WorkItemNode => node.kind === "work_item" && node.id === summary.metadata.workItemId
@@ -2034,14 +2044,17 @@ async function loadAgentRunSummary(
   runArtifactReader: AgentRunArtifactReader,
   runId: string
 ): Promise<LoadedAgentRunSummary> {
-  if (!/^run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}(?:-[0-9]+)?$/u.test(runId)) {
+  if (!isAgentRunId(runId)) {
     throw new Error(`Invalid run id: ${runId}`);
   }
 
   const runDirectory = `planning/runs/${runId}`;
-  const metadata = parseAgentExecutionRunMetadata(
-    await readRunArtifact(runArtifactReader, `${runDirectory}/metadata.json`, runId)
-  );
+  const metadataContent = await readRunArtifact(runArtifactReader, `${runDirectory}/metadata.json`, runId);
+  const metadataValue = parseJsonObject(metadataContent, "run metadata");
+  if (!("validation" in metadataValue)) {
+    throw new Error(`Run ${runId} was prepared but not executed; no reviewable result artifact exists.`);
+  }
+  const metadata = parseAgentExecutionRunMetadataFromObject(metadataValue);
   const result = parseAgentExecutionResult(await readRunArtifact(runArtifactReader, `${runDirectory}/result.json`, runId));
 
   if (metadata.runId !== runId || result.runId !== runId) {
@@ -2056,6 +2069,56 @@ async function loadAgentRunSummary(
     changedFileSummary: result.changedFileSummary,
     artifacts: result.artifactPaths
   };
+}
+
+async function resolveReviewableRunId(runArtifactReader: AgentRunArtifactReader, targetId: string): Promise<string> {
+  if (isAgentRunId(targetId)) {
+    return targetId;
+  }
+
+  if (!isWorkItemId(targetId)) {
+    throw new Error(`Invalid run id: ${targetId}`);
+  }
+
+  if (!runArtifactReader.listRunArtifactsForWorkItem) {
+    throw new Error(`Run artifact reader cannot discover runs for Work Item: ${targetId}`);
+  }
+
+  const candidates = [...(await runArtifactReader.listRunArtifactsForWorkItem(targetId))].sort((left, right) =>
+    left.runId.localeCompare(right.runId)
+  );
+  if (candidates.length === 0) {
+    throw new Error(`No run artifacts found for Work Item ${targetId}. Run the agent before reviewing this Work Item.`);
+  }
+
+  const reviewableSummaries: LoadedAgentRunSummary[] = [];
+  const preparedRunIds = candidates
+    .filter((candidate) => candidate.hasMetadata && !candidate.hasResult)
+    .map((candidate) => candidate.runId);
+
+  for (const candidate of candidates) {
+    if (!candidate.hasResult) {
+      continue;
+    }
+
+    const summary = await loadAgentRunSummary(runArtifactReader, candidate.runId);
+    if (summary.metadata.workItemId === targetId) {
+      reviewableSummaries.push(summary);
+    }
+  }
+
+  if (reviewableSummaries.length === 0) {
+    const preparedSuffix =
+      preparedRunIds.length > 0 ? ` Prepared but not executed: ${preparedRunIds.join(", ")}.` : "";
+    throw new Error(`No reviewable executed runs found for Work Item ${targetId}.${preparedSuffix} Run the agent before review.`);
+  }
+
+  reviewableSummaries.sort((left, right) => {
+    const generatedAtOrder = left.metadata.generatedAt.localeCompare(right.metadata.generatedAt);
+    return generatedAtOrder === 0 ? left.metadata.runId.localeCompare(right.metadata.runId) : generatedAtOrder;
+  });
+
+  return reviewableSummaries[reviewableSummaries.length - 1].metadata.runId;
 }
 
 function isPassingAgentRunSummary(summary: LoadedAgentRunSummary): boolean {
@@ -2082,8 +2145,7 @@ async function readRunArtifact(runArtifactReader: AgentRunArtifactReader, path: 
   }
 }
 
-function parseAgentExecutionRunMetadata(content: string): AgentExecutionRunMetadata {
-  const value = parseJsonObject(content, "run metadata");
+function parseAgentExecutionRunMetadataFromObject(value: Record<string, unknown>): AgentExecutionRunMetadata {
   const validation = readValidationSummary(value.validation);
   const agent = value.agent;
   if (agent !== "codex" && agent !== "claude" && agent !== "gemini") {
@@ -2099,6 +2161,14 @@ function parseAgentExecutionRunMetadata(content: string): AgentExecutionRunMetad
     validationCommands: readStringArray(value.validationCommands, "metadata.validationCommands"),
     validation
   };
+}
+
+function isAgentRunId(value: string): boolean {
+  return /^run-[0-9]{8}-[0-9]{6}-wi-[0-9]{3}(?:-[0-9]+)?$/u.test(value);
+}
+
+function isWorkItemId(value: string): boolean {
+  return /^wi-[0-9]{3}$/u.test(value);
 }
 
 function parseAgentExecutionResult(content: string): ParsedAgentExecutionResult {
