@@ -2,6 +2,32 @@
 
 ThePlanner is a CLI-first TypeScript/Node tool for turning a product idea into repository-native planning artifacts backed by a canonical Planning Graph. It produces deterministic PRD, architecture, RFC, dependency, Work Item, readiness, agent-context, validation, run-audit, tracker-preview, repo-scan, and reconciliation outputs.
 
+## At a Glance
+
+| | |
+| --- | --- |
+| **Problem** | Product intent is often scattered across prose, tickets, and agent prompts with no reliable dependency or readiness model. |
+| **Approach** | Keep one validated Planning Graph as the source of truth and generate deterministic, reviewable repository artifacts from it. |
+| **Release** | `0.1.1`, published as [`@mudabbirulsaad/theplanner`](https://www.npmjs.com/package/@mudabbirulsaad/theplanner). |
+| **Quality** | Strict TypeScript, hexagonal boundaries, schema and semantic validation, Vitest coverage, golden files, and CLI integration tests. |
+
+## Quick Demonstration
+
+```sh
+npx @mudabbirulsaad/theplanner init --json
+npx @mudabbirulsaad/theplanner status --json
+npx @mudabbirulsaad/theplanner validate --json
+```
+
+The commands create or inspect a local planning workspace without requiring a hosted service. Mutating operations distinguish preview from apply, and generated artifacts remain reviewable in Git.
+
+## Engineering Evidence
+
+- A pure domain core owns graph semantics, readiness, projection rendering, and reconciliation.
+- Application ports isolate filesystem, process, tracker, schema, and future LLM-provider adapters.
+- Agent execution is bounded, auditable, and human-reviewed through saved run artifacts and explicit accept/reject events.
+- `npm run check` compiles the project, runs tests, and enforces dependency boundaries.
+
 ## MVP Scope
 
 The MVP is local and repository-first:
