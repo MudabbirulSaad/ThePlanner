@@ -6,7 +6,7 @@ ThePlanner is a CLI-first TypeScript/Node tool for turning a product idea into r
 
 | | |
 | --- | --- |
-| **Problem** | Product intent is often scattered across prose, tickets, and agent prompts with no reliable dependency or readiness model. |
+| **Problem** | Product intent is often scattered across rough input, Intake Briefs, and Work Items with no reliable dependency or readiness model. |
 | **Approach** | Keep one validated Planning Graph as the source of truth and generate deterministic, reviewable repository artifacts from it. |
 | **Release** | `0.1.1`, published as [`@mudabbirulsaad/theplanner`](https://www.npmjs.com/package/@mudabbirulsaad/theplanner). |
 | **Quality** | Strict TypeScript, hexagonal boundaries, schema and semantic validation, Vitest coverage, golden files, and CLI integration tests. |
